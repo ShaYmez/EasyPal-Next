@@ -1,7 +1,6 @@
 name: Release Windows
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -12,7 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -22,13 +22,26 @@ jobs:
           pip install -e ".[dev,packaging]"
 
       - name: Run tests
-        run: pytest
+        run: pytest -q
 
       - name: Build PyInstaller bundle
         run: pyinstaller --noconfirm packaging/windows/easypal-next.spec --distpath packaging/windows/dist --workpath packaging/windows/build
 
-      - name: Upload bundle artifact
+      - name: Upload PyInstaller artifact
         uses: actions/upload-artifact@v4
         with:
           name: EasyPal-Next-windows
           path: packaging/windows/dist/EasyPal-Next/
+
+      - name: Build Inno Setup installer
+        if: hashFiles('packaging/windows/redist/libcodec2.dll') != ''
+        run: |
+          choco install innosetup -y
+          iscc packaging/windows/easypal-next.iss
+
+      - name: Upload installer
+        if: hashFiles('packaging/windows/redist/libcodec2.dll') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyPal-Next-Setup
+          path: packaging/windows/output/*.exe

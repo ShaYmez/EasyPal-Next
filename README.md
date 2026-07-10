@@ -4,15 +4,31 @@
 
 EasyPal brought error-corrected image and file transfer to amateur radio. When Erik became a silent key, development of the closed-source EasyPal ended. EasyPal-Next continues that legacy as a modern, patent-free, community-maintained successor.
 
-## Features (roadmap)
+## Features (v0.2.0)
 
-- Digital file/image transfer over HF/VHF using **Codec2 / FreeDV** (replacing DRM)
+- **DATAC3** digital file/image transfer via Codec2 / FreeDV (loopback + on-air)
 - **Perfect-mode** error correction via zfec + modem LDPC
-- **Waterfall text** headers (WFTxt) — paint callsigns and messages in the spectrum
-- PySide6 desktop UI with RX/TX panes, waterfall, and logging
+- **Waterfall text** TX headers (WFTxt) with live spectrum display during RX
+- PySide6 desktop UI: RX pane, waterfall, log panel, settings
 - Mobile/tablet **LAN gallery** for viewing decoded images on your phone
-- **CAT**, serial PTT, and VOX/manual radio profiles
-- Windows installer (PyInstaller + Inno Setup)
+- **VOX**, serial PTT, and Hamlib CAT radio backends
+- Windows installer build (PyInstaller + Inno Setup)
+
+## Quick validation
+
+```bat
+python scripts\verify-codec2.py      REM requires libcodec2.dll
+python scripts\loopback-transfer.py  REM end-to-end SHA256 loopback test
+pytest
+```
+
+On-air testing: see [docs/on-air-test.md](docs/on-air-test.md).
+
+## Download / install (release)
+
+Tagged releases build `EasyPal-Next-Setup-0.2.0.exe` via GitHub Actions. For local builds see [packaging/windows/README.md](packaging/windows/README.md).
+
+Unsigned installers may show a Windows SmartScreen prompt — use **More info → Run anyway** or sign with an EV code signing certificate.
 
 ## Development environment (Windows)
 

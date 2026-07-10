@@ -44,6 +44,7 @@ class AudioConfig(BaseModel):
 
 class ModemConfig(BaseModel):
     mode: str = "DATAC3"
+    sample_rate: int = 8000
     libcodec2_path: str | None = None
     fsk_M: int = 2
     fsk_Rs: int = 100

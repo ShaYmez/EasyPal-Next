@@ -6,14 +6,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QProgressBar,
-    QPushButton,
+    QSplitter,
     QStatusBar,
     QToolBar,
     QVBoxLayout,
@@ -22,10 +21,15 @@ from PySide6.QtWidgets import (
 
 from easypal_next.app.bootstrap import AppContext
 from easypal_next.app.paths import user_gallery_dir
-from easypal_next.core.events import LogEvent, SessionStateChangedEvent
+from easypal_next.core.events import GalleryUpdatedEvent, LogEvent, SessionStateChangedEvent
 from easypal_next.core.session import SessionState
 from easypal_next.network.util import gallery_urls
 from easypal_next.ui.view_models.transfer_vm import TransferViewModel
+from easypal_next.ui.widgets.log_panel import LogPanel
+from easypal_next.ui.widgets.rx_pane import RxPane
+from easypal_next.ui.widgets.settings_dialog import SettingsDialog
+from easypal_next.ui.widgets.waterfall_text_editor import WaterfallTextEditor
+from easypal_next.ui.widgets.waterfall_widget import WaterfallWidget
 
 
 class MainWindow(QMainWindow):
@@ -35,50 +39,30 @@ class MainWindow(QMainWindow):
         self._selected_file: Path | None = None
         self._vm = TransferViewModel(context.event_bus)
         self.setWindowTitle("EasyPal-Next")
-        self.resize(1100, 720)
+        self.resize(1200, 800)
 
         central = QWidget()
         layout = QVBoxLayout(central)
 
-        title = QLabel("EasyPal-Next")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 24px; font-weight: bold;")
-        layout.addWidget(title)
-
-        subtitle = QLabel(
-            "Open-source digital SSTV — in memory of Erik Sundstrup VK4AES (SK)\n"
-            "Copyright © 2026 Shane Daley M0VUB (ShaYmez)"
+        header = QLabel(
+            f"EasyPal-Next · {context.config.callsign} · {context.config.modem.mode}"
+            f" · {'loopback' if context.config.transfer.loopback_mode else 'on-air'}"
         )
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(header)
+
+        local_url, lan_url = gallery_urls(context.config.network.port)
+        gallery_lines = [f"Laptop gallery: {local_url}"]
+        if lan_url:
+            gallery_lines.append(f"Phone/tablet: {lan_url}")
+        self._gallery_info = QLabel(" · ".join(gallery_lines))
+        self._gallery_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._gallery_info.setWordWrap(True)
+        layout.addWidget(self._gallery_info)
 
         self._status_label = QLabel("Session: idle")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._status_label)
-
-        local_url, lan_url = gallery_urls(context.config.network.port)
-        gallery_lines = [f"Laptop: {local_url}"]
-        if lan_url:
-            gallery_lines.append(f"Phone/tablet (same Wi‑Fi): {lan_url}")
-        info = QLabel(
-            "\n".join(gallery_lines)
-            + f"\nCallsign: {context.config.callsign} · Modem: {context.config.modem.mode}"
-            + f" · Mode: {'loopback' if context.config.transfer.loopback_mode else 'on-air'}"
-        )
-        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info.setWordWrap(True)
-        layout.addWidget(info)
-
-        device_row = QHBoxLayout()
-        device_row.addWidget(QLabel("Audio input:"))
-        self._input_device = QComboBox()
-        device_row.addWidget(self._input_device)
-        device_row.addWidget(QLabel("Audio output:"))
-        self._output_device = QComboBox()
-        device_row.addWidget(self._output_device)
-        layout.addLayout(device_row)
-        self._populate_devices()
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
@@ -87,6 +71,21 @@ class MainWindow(QMainWindow):
         self._file_label = QLabel("No file selected")
         self._file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._file_label)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._rx_pane = RxPane(context.gallery)
+        self._waterfall = WaterfallWidget(context.event_bus)
+        splitter.addWidget(self._rx_pane)
+        splitter.addWidget(self._waterfall)
+        splitter.setSizes([500, 500])
+        layout.addWidget(splitter, stretch=1)
+
+        bottom = QHBoxLayout()
+        self._wftxt = WaterfallTextEditor(context.config.waterfall)
+        bottom.addWidget(self._wftxt, stretch=1)
+        self._log_panel = LogPanel(context.event_bus)
+        bottom.addWidget(self._log_panel, stretch=2)
+        layout.addLayout(bottom)
 
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
@@ -98,26 +97,27 @@ class MainWindow(QMainWindow):
         toolbar.addAction("Transmit", self._transmit)
         toolbar.addAction("Receive", self._receive)
         toolbar.addAction("Abort", self._abort)
+        toolbar.addAction("Settings", self._open_settings)
 
         context.event_bus.subscribe(SessionStateChangedEvent, self._on_state_changed)
         context.event_bus.subscribe(LogEvent, self._on_log)
+        context.event_bus.subscribe(GalleryUpdatedEvent, self._on_gallery_updated)
         self._vm.progress_changed.connect(self._on_progress)
         self._vm.state_changed.connect(lambda s: self._status_label.setText(f"Session: {s}"))
 
-    def _populate_devices(self) -> None:
-        devices = self._context.audio_engine.list_devices()
-        self._input_device.addItem("Default", None)
-        self._output_device.addItem("Default", None)
-        for dev in devices:
-            label = f"{dev['index']}: {dev['name']}"
-            if dev["max_input_channels"] > 0:
-                self._input_device.addItem(label, dev["index"])
-            if dev["max_output_channels"] > 0:
-                self._output_device.addItem(label, dev["index"])
-
-    def _apply_device_selection(self) -> None:
-        self._context.config.audio.input_device = self._input_device.currentData()
-        self._context.config.audio.output_device = self._output_device.currentData()
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(self._context, self)
+        if dialog.exec():
+            config = dialog.apply()
+            self._wftxt.apply_to_config(config.waterfall)
+            self._status_label.setText(
+                f"Session: idle · {'loopback' if config.transfer.loopback_mode else 'on-air'}"
+            )
+            QMessageBox.information(
+                self,
+                "Settings",
+                "Settings saved. Restart the app for loopback/on-air mode changes to take full effect.",
+            )
 
     def _load_pic(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -137,7 +137,7 @@ class MainWindow(QMainWindow):
         if self._context.transfer_engine.state != SessionState.IDLE:
             QMessageBox.warning(self, "Transmit", "Transfer already in progress.")
             return
-        self._apply_device_selection()
+        self._wftxt.apply_to_config(self._context.config.waterfall)
         try:
             self._context.transfer_engine.start_tx(self._selected_file)
         except Exception as exc:
@@ -147,7 +147,6 @@ class MainWindow(QMainWindow):
         if self._context.transfer_engine.state != SessionState.IDLE:
             QMessageBox.warning(self, "Receive", "Transfer already in progress.")
             return
-        self._apply_device_selection()
         out_dir = user_gallery_dir()
         try:
             self._context.transfer_engine.start_rx(out_dir)
@@ -167,3 +166,6 @@ class MainWindow(QMainWindow):
     def _on_progress(self, pct: float, done: int, total: int) -> None:
         self._progress.setValue(int(pct))
         self.statusBar().showMessage(f"Progress: {done}/{total} ({pct:.1f}%)", 3000)
+
+    def _on_gallery_updated(self, event: GalleryUpdatedEvent) -> None:
+        self._rx_pane.add_entry(event.image_id)

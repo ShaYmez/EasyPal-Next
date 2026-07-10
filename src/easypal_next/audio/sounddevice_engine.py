@@ -20,6 +20,7 @@ class SoundDeviceEngine(AudioEngine):
         self._running = False
         self._on_rx: AudioChunkCallback | None = None
         self._tx_queue: Queue[np.ndarray] = Queue()
+        self._tx_carry = np.array([], dtype=np.int16)
         self._input_stream: sd.InputStream | None = None
         self._output_stream: sd.OutputStream | None = None
 
@@ -56,17 +57,22 @@ class SoundDeviceEngine(AudioEngine):
             self._on_rx(indata.copy().reshape(-1))
 
     def _output_callback(self, outdata: np.ndarray, frames: int, time, status) -> None:  # noqa: ARG002
-        try:
-            chunk = self._tx_queue.get_nowait()
-        except Empty:
-            outdata.fill(0)
-            return
-        samples = chunk.astype(np.float32) / 32768.0
-        if len(samples) < frames:
-            outdata[: len(samples), 0] = samples
-            outdata[len(samples) :, 0] = 0
-        else:
-            outdata[:, 0] = samples[:frames]
+        needed = frames
+        out_offset = 0
+        while needed > 0:
+            if len(self._tx_carry) == 0:
+                try:
+                    self._tx_carry = self._tx_queue.get_nowait().astype(np.int16)
+                except Empty:
+                    outdata[out_offset:, 0] = 0
+                    return
+            take = min(needed, len(self._tx_carry))
+            outdata[out_offset : out_offset + take, 0] = (
+                self._tx_carry[:take].astype(np.float32) / 32768.0
+            )
+            self._tx_carry = self._tx_carry[take:]
+            out_offset += take
+            needed -= take
 
     def start(self, on_rx: AudioChunkCallback) -> None:
         self._on_rx = on_rx

@@ -1,5 +1,5 @@
 #define MyAppName "EasyPal-Next"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Shane Daley M0VUB (ShaYmez)"
 #define MyAppURL "https://github.com/ShaYmez/EasyPal-Next"
 

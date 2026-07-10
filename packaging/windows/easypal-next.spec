@@ -2,14 +2,17 @@
 
 from pathlib import Path
 
-project_root = Path(SPECPATH).resolve().parents[2]
+project_root = Path(SPECPATH).resolve().parents[1]
+
+_redist_dll = project_root / "packaging" / "windows" / "redist" / "libcodec2.dll"
+_binaries = []
+if _redist_dll.is_file():
+    _binaries.append((str(_redist_dll), "."))
 
 a = Analysis(
     [str(project_root / "src" / "easypal_next" / "__main__.py")],
     pathex=[str(project_root / "src")],
-    binaries=[
-        (str(project_root / "packaging" / "windows" / "redist" / "libcodec2.dll"), "."),
-    ],
+    binaries=_binaries,
     datas=[
         (str(project_root / "config" / "defaults.yaml"), "config"),
         (str(project_root / "src" / "easypal_next" / "network" / "static"), "easypal_next/network/static"),
@@ -18,6 +21,9 @@ a = Analysis(
         "sounddevice",
         "numpy",
         "zfec",
+        "PySide6.QtCore",
+        "PySide6.QtGui",
+        "PySide6.QtWidgets",
         "uvicorn.logging",
         "uvicorn.loops.auto",
         "uvicorn.protocols.http.auto",

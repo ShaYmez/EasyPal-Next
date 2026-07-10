@@ -10,7 +10,7 @@ from easypal_next.audio.sounddevice_engine import SoundDeviceEngine
 from easypal_next.community.null_client import NullCommunityClient
 from easypal_next.config.loader import load_config
 from easypal_next.config.schema import AppConfig
-from easypal_next.core.events import EventBus
+from easypal_next.core.events import EventBus, SpectrumEvent
 from easypal_next.core.transfer_engine import TransferEngine
 from easypal_next.modem.factory import create_modem
 from easypal_next.network.gallery_store import GalleryStore
@@ -41,7 +41,8 @@ class AppContext:
                 self.audio_engine,
                 self.rx_modem,
                 config.audio.sample_rate,
-                8000,
+                config.modem.sample_rate,
+                on_spectrum=lambda bins: self.event_bus.publish(SpectrumEvent(bins=bins)),
             )
         self.transfer_engine = TransferEngine(
             config,

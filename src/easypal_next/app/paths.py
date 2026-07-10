@@ -53,12 +53,20 @@ def bundled_libcodec2_path() -> Path:
     return app_root() / "libcodec2.dll"
 
 
+def dev_redist_libcodec2_path() -> Path:
+    return app_root() / "packaging" / "windows" / "redist" / "libcodec2.dll"
+
+
 def resolve_libcodec2(configured: str | None) -> Path | None:
     if configured:
         path = Path(configured).expanduser()
         if path.is_file():
             return path
-    for candidate in (bundled_libcodec2_path(), app_root() / "libcodec2.so"):
+    for candidate in (
+        bundled_libcodec2_path(),
+        dev_redist_libcodec2_path(),
+        app_root() / "libcodec2.so",
+    ):
         if candidate.is_file():
             return candidate
     return None

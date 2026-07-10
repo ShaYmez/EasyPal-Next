@@ -18,7 +18,13 @@ pip install -e ".[packaging]"
 .\packaging\windows\build.ps1
 ```
 
-Output: `packaging/windows/output/EasyPal-Next-Setup-0.1.0.exe`
+Output: `packaging/windows/output/EasyPal-Next-Setup-0.2.0.exe`
+
+PyInstaller builds without `libcodec2.dll` present (modem disabled); place the DLL in `redist/` before shipping an on-air-capable installer.
+
+## CI release
+
+Push a version tag (`v0.2.0`) to trigger [.github/workflows/release-windows.yml](../../.github/workflows/release-windows.yml).
 
 ## What gets bundled
 

@@ -30,7 +30,7 @@ requires_codec2 = pytest.mark.skipif(
 def test_transfer_loopback_sha256():
     config = load_config()
     config.transfer.loopback_mode = True
-    config.waterfall.enabled = False
+    config.waterfall.enabled = True
 
     event_bus = EventBus()
     tx_modem = create_modem(config.modem)

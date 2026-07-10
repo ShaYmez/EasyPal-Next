@@ -50,3 +50,13 @@ def load_config(
     user = _load_yaml(user_path or user_config_path())
     merged = _deep_merge(defaults, user)
     return AppConfig.model_validate(merged)
+
+
+def save_config(config: AppConfig, user_path: Path | None = None) -> Path:
+    """Persist user overrides to config.yaml."""
+    path = user_path or user_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = config.model_dump(mode="json", exclude_none=True)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
+    return path

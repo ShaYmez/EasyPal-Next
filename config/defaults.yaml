@@ -8,6 +8,7 @@ audio:
 
 modem:
   mode: "DATAC3"
+  sample_rate: 8000
   libcodec2_path: null
   fsk_M: 2
   fsk_Rs: 100

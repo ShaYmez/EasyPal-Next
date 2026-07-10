@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from easypal_next.audio.modem_bridge import ModemBridge
+from easypal_next.audio.resampler import downsample_to_modem
 from easypal_next.config.schema import AppConfig
 from easypal_next.core.events import (
     EventBus,
@@ -27,6 +28,7 @@ from easypal_next.fec.encoder import FecEncoder
 from easypal_next.fec.file_assembler import FileAssembler, FileMeta
 from easypal_next.fec.meta_codec import pack_fec_shard, pack_file_meta, unpack_fec_shard, unpack_file_meta
 from easypal_next.fec.packet import PacketType, frame_packet, parse_packet
+from easypal_next.modem.framer import ModemFramer
 from easypal_next.modem.interface import ModemInterface
 from easypal_next.network.gallery_store import GalleryStore
 from easypal_next.radio.controller import RadioController
@@ -68,6 +70,9 @@ class TransferEngine:
         self._rx_output_dir = Path(".")
         self._seq = 0
         self._initialized = False
+        self._rx_framer = ModemFramer(126)
+        self._rx_listening = False
+        self._bridge_tx_only = False
 
     @property
     def state(self) -> SessionState:
@@ -81,7 +86,8 @@ class TransferEngine:
             return
         self._tx_modem.open(self._config.modem.mode, self._config.modem.sample_rate)
         self._rx_modem.open(self._config.modem.mode, self._config.modem.sample_rate)
-        self._rx_modem.set_frame_rx_callback(self._on_modem_rx)
+        self._rx_framer = ModemFramer(self._rx_modem.frame_payload_size)
+        self._rx_modem.set_frame_rx_callback(self._on_modem_subframe)
         if not self._config.transfer.loopback_mode:
             self._radio.connect()
             if self._bridge:
@@ -94,6 +100,23 @@ class TransferEngine:
         self._initialized = True
         self._event_bus.publish(LogEvent(level="info", message="Transfer engine initialized"))
 
+    def _ensure_bridge_running(self, tx_only: bool = False) -> None:
+        if self._config.transfer.loopback_mode or not self._bridge:
+            return
+        if not self._bridge.is_running:
+            self._bridge.start()
+            if tx_only:
+                self._bridge_tx_only = True
+
+    def _maybe_stop_bridge(self) -> None:
+        if self._config.transfer.loopback_mode or not self._bridge:
+            return
+        if self._rx_listening:
+            return
+        if self._bridge.is_running:
+            self._bridge.stop()
+        self._bridge_tx_only = False
+
     def _set_state(self, state: SessionState) -> None:
         self._state = state
         self._event_bus.publish(SessionStateChangedEvent(state=state))
@@ -104,6 +127,12 @@ class TransferEngine:
         pct = (done / total * 100.0) if total else 0.0
         self._progress.pct = pct
         self._event_bus.publish(TransferProgressEvent(pct=pct, bytes_done=done, bytes_total=total))
+
+    def _on_modem_subframe(self, payload: bytes) -> None:
+        packet = self._rx_framer.feed(payload)
+        if packet is None:
+            return
+        self._on_modem_rx(packet)
 
     def _on_modem_rx(self, payload: bytes) -> None:
         try:
@@ -118,7 +147,8 @@ class TransferEngine:
         elif ptype == PacketType.FEC_SHARD:
             chunk_id, shard_index, data = unpack_fec_shard(body)
             if self._assembler.add_shard(chunk_id, shard_index, data):
-                self._update_progress(len(self._assembler._chunks), self._assembler.meta.chunk_count if self._assembler.meta else 0)  # noqa: SLF001
+                chunk_count = self._assembler.meta.chunk_count if self._assembler.meta else 0
+                self._update_progress(len(self._assembler._chunks), chunk_count)  # noqa: SLF001
         elif ptype == PacketType.TX_COMPLETE:
             self._finalize_rx()
 
@@ -144,23 +174,28 @@ class TransferEngine:
         self._seq += 1
         return self._seq
 
-    def _modem_send_payload(self, payload: bytes) -> np.ndarray:
-        framed = frame_packet(PacketType.FEC_SHARD, self._next_seq(), 1, payload)
-        if hasattr(self._tx_modem, "encode_preamble"):
-            parts = [self._tx_modem.encode_preamble(), self._tx_modem.encode_frame(framed)]
-            parts.append(self._tx_modem.encode_postamble())
-            return np.concatenate(parts)
-        return self._tx_modem.encode_frame(framed)
+    def _encode_modem_burst(self, packet: bytes) -> np.ndarray:
+        framer = ModemFramer(self._tx_modem.frame_payload_size)
+        subframes = framer.fragment(packet)
+        parts: list[np.ndarray] = []
+        for subframe in subframes:
+            if hasattr(self._tx_modem, "encode_preamble"):
+                parts.append(self._tx_modem.encode_preamble())
+            parts.append(self._tx_modem.encode_frame(subframe))
+            if hasattr(self._tx_modem, "encode_postamble"):
+                parts.append(self._tx_modem.encode_postamble())
+        return np.concatenate(parts) if parts else np.array([], dtype=np.int16)
 
     def _send_packet(self, ptype: PacketType, body: bytes, total: int = 1) -> np.ndarray:
         framed = frame_packet(ptype, self._next_seq(), total, body)
-        parts: list[np.ndarray] = []
-        if hasattr(self._tx_modem, "encode_preamble"):
-            parts.append(self._tx_modem.encode_preamble())
-        parts.append(self._tx_modem.encode_frame(framed))
-        if hasattr(self._tx_modem, "encode_postamble"):
-            parts.append(self._tx_modem.encode_postamble())
-        return np.concatenate(parts)
+        return self._encode_modem_burst(framed)
+
+    def _waterfall_to_modem(self, audio: np.ndarray) -> np.ndarray:
+        return downsample_to_modem(
+            audio,
+            self._config.waterfall.sample_rate,
+            self._tx_modem.modem_sample_rate,
+        )
 
     def _play_or_buffer(self, audio: np.ndarray, loopback_buffer: list[np.ndarray]) -> None:
         if self._config.transfer.loopback_mode:
@@ -170,7 +205,12 @@ class TransferEngine:
         time.sleep(0.01)
 
     def _run_tx(self, file_path: Path) -> None:
+        bridge_started_here = False
         try:
+            if not self._config.transfer.loopback_mode:
+                self._ensure_bridge_running(tx_only=True)
+                bridge_started_here = self._bridge_tx_only and self._bridge is not None
+
             data = file_path.read_bytes()
             file_hash = hashlib.sha256(data).hexdigest()
             chunk_size = self._config.fec.chunk_size
@@ -198,7 +238,7 @@ class TransferEngine:
                     font=self._config.waterfall.default_font,
                     font_size=self._config.waterfall.default_font_size,
                 )
-                self._play_or_buffer(header, loopback_buffer)
+                self._play_or_buffer(self._waterfall_to_modem(header), loopback_buffer)
 
             self._set_state(SessionState.TX_ACTIVE)
             total_shards = chunk_count * self._config.fec.m
@@ -232,18 +272,21 @@ class TransferEngine:
                     font=self._config.waterfall.default_font,
                     font_size=self._config.waterfall.default_font_size,
                 )
-                self._play_or_buffer(footer, loopback_buffer)
+                self._play_or_buffer(self._waterfall_to_modem(footer), loopback_buffer)
 
             if self._config.transfer.loopback_mode:
                 silence = np.zeros(int(self._tx_modem.modem_sample_rate * 0.1), dtype=np.int16)
                 loopback_buffer.append(silence)
                 combined = np.concatenate(loopback_buffer)
                 self._assembler = FileAssembler()
+                self._rx_framer.reset()
                 self._set_state(SessionState.RX_ASSEMBLING)
                 self._rx_modem.decode_samples(combined)
                 self._finalize_rx()
             elif self._bridge:
-                time.sleep(0.5)
+                self._bridge.drain_tx()
+                post_delay = getattr(self._config.radio, "post_tx_delay_ms", 200)
+                time.sleep(post_delay / 1000.0)
 
             if not self._config.transfer.loopback_mode:
                 self._radio.ptt_off()
@@ -257,6 +300,8 @@ class TransferEngine:
             self._set_state(SessionState.IDLE)
         finally:
             self._abort.clear()
+            if bridge_started_here:
+                self._maybe_stop_bridge()
 
     def start_tx(self, file_path: Path) -> None:
         if self._state != SessionState.IDLE:
@@ -276,16 +321,21 @@ class TransferEngine:
         self._rx_output_dir = output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         self._assembler = FileAssembler()
+        self._rx_framer.reset()
         self._abort.clear()
+        self._rx_listening = True
+        self._bridge_tx_only = False
         if not self._config.transfer.loopback_mode and self._bridge:
-            self._bridge.start()
+            self._ensure_bridge_running()
         self._event_bus.publish(LogEvent(level="info", message=f"RX listening: {output_dir}"))
         self._set_state(SessionState.RX_LISTEN)
 
     def abort(self) -> None:
         self._abort.set()
+        self._rx_listening = False
         if self._bridge:
             self._bridge.stop()
+        self._bridge_tx_only = False
         if not self._config.transfer.loopback_mode:
             try:
                 self._radio.ptt_off()
