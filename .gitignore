@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.cursor/
+
+# PyInstaller / packaging
+packaging/windows/dist/
+packaging/windows/build/
+*.spec.bak
+
+# Native redistributables (download at build time)
+packaging/windows/redist/*.dll
+
+# User / runtime data
+gallery/
+logs/
+*.wav
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets
+.env
+*.key

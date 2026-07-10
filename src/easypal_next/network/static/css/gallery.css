@@ -1,0 +1,115 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  background: #0f1419;
+  color: #e7ecf3;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+.header {
+  padding: 1rem 1.25rem;
+  background: #16202a;
+  border-bottom: 1px solid #2a3644;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.header p {
+  margin: 0.25rem 0 0;
+  color: #9fb0c3;
+  font-size: 0.9rem;
+}
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.gallery-item {
+  background: #16202a;
+  border: 1px solid #2a3644;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+
+.gallery-item img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+
+.gallery-item .meta {
+  padding: 0.5rem 0.65rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.progress {
+  padding: 0 1rem 1rem;
+}
+
+.progress.hidden {
+  display: none;
+}
+
+.bar {
+  height: 0.5rem;
+  background: #2a3644;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+#bar-fill {
+  height: 100%;
+  width: 0;
+  background: #3ecf8e;
+  transition: width 0.2s ease;
+}
+
+#viewer {
+  border: none;
+  border-radius: 1rem;
+  padding: 0;
+  max-width: 96vw;
+  max-height: 96vh;
+  background: #16202a;
+}
+
+#viewer::backdrop {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+#viewer-img {
+  max-width: 90vw;
+  max-height: 75vh;
+  display: block;
+}
+
+#viewer-close {
+  width: 100%;
+  padding: 0.85rem;
+  border: none;
+  background: #2a3644;
+  color: #e7ecf3;
+  font-size: 1rem;
+}
+
+@media (min-width: 768px) {
+  .gallery {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    padding: 1.5rem;
+  }
+}

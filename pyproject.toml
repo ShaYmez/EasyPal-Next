@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "easypal-next"
+version = "0.1.0"
+description = "Open-source digital SSTV successor to EasyPal — in memory of VK4AES (SK)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11,<3.13"
+authors = [
+    { name = "Shane Daley M0VUB (ShaYmez)", email = "shane@freestar.network" },
+]
+keywords = ["amateur-radio", "sstv", "dsstv", "freedv", "codec2", "hf"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Telecommunications Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Ham Radio",
+]
+dependencies = [
+    "PySide6>=6.6.0",
+    "numpy>=1.26.0",
+    "sounddevice>=0.4.6",
+    "zfec>=1.6.0",
+    "pyserial>=3.5",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "PyYAML>=6.0.1",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "httpx>=0.27.0",
+    "aioftp>=0.22.0",
+    "Pillow>=10.2.0",
+    "structlog>=24.1.0",
+]
+
+[project.optional-dependencies]
+hamlib = []
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.2.0",
+]
+packaging = [
+    "pyinstaller>=6.3.0",
+]
+
+[project.scripts]
+easypal-next = "easypal_next.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/ShaYmez/EasyPal-Next"
+Repository = "https://github.com/ShaYmez/EasyPal-Next"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+easypal_next = ["network/static/**/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

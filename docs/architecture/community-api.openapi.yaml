@@ -1,0 +1,26 @@
+openapi: 3.0.3
+info:
+  title: EasyPal-Next Community Server API
+  version: 0.1.0
+  description: |
+    Shared contract between EasyPal-Next desktop app and the future
+    EasyPal-Next-Server repository (Hybrid mode, gallery upload).
+paths:
+  /api/v1/images:
+    post:
+      summary: Upload received or transmitted image
+      responses:
+        "201":
+          description: Image registered
+  /api/v1/images/{image_id}:
+    get:
+      summary: Fetch image by Hybrid ID
+      parameters:
+        - name: image_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Image bytes

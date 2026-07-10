@@ -1,0 +1,15 @@
+# EasyPal-Next runtime dependencies
+PySide6>=6.6.0
+numpy>=1.26.0
+sounddevice>=0.4.6
+zfec>=1.6.0
+pyserial>=3.5
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+PyYAML>=6.0.1
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+httpx>=0.27.0
+aioftp>=0.22.0
+Pillow>=10.2.0
+structlog>=24.1.0

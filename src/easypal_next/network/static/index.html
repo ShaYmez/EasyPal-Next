@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>EasyPal-Next Gallery</title>
+  <link rel="stylesheet" href="/static/css/gallery.css">
+</head>
+<body>
+  <header class="header">
+    <h1>EasyPal-Next</h1>
+    <p id="status">Connecting…</p>
+  </header>
+  <main>
+    <section id="progress" class="progress hidden">
+      <div class="bar"><div id="bar-fill"></div></div>
+      <p id="progress-text"></p>
+    </section>
+    <section id="gallery" class="gallery"></section>
+  </main>
+  <dialog id="viewer">
+    <img id="viewer-img" alt="Received image">
+    <button id="viewer-close" type="button">Close</button>
+  </dialog>
+  <script src="/static/js/gallery.js"></script>
+</body>
+</html>
