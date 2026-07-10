@@ -57,3 +57,6 @@ community:
   ftp_user: null
   ftp_password: null
   ftp_remote_dir: "/"
+
+transfer:
+  loopback_mode: true

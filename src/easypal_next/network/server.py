@@ -68,6 +68,7 @@ class NetworkServer:
                 self._modem_mode,
             ),
             get_progress=lambda: self._transfer_engine.get_progress(),
+            abort_transfer=self._transfer_engine.abort,
         )
         app.include_router(router)
 

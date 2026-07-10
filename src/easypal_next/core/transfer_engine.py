@@ -2,12 +2,35 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
+from easypal_next.audio.modem_bridge import ModemBridge
 from easypal_next.config.schema import AppConfig
-from easypal_next.core.events import EventBus, LogEvent, SessionStateChangedEvent
+from easypal_next.core.events import (
+    EventBus,
+    GalleryUpdatedEvent,
+    LogEvent,
+    RxImageReadyEvent,
+    SessionStateChangedEvent,
+    TransferProgressEvent,
+    WaterfallPaintStartedEvent,
+)
 from easypal_next.core.session import SessionState
+from easypal_next.fec.encoder import FecEncoder
+from easypal_next.fec.file_assembler import FileAssembler, FileMeta
+from easypal_next.fec.meta_codec import pack_fec_shard, pack_file_meta, unpack_fec_shard, unpack_file_meta
+from easypal_next.fec.packet import PacketType, frame_packet, parse_packet
+from easypal_next.modem.interface import ModemInterface
+from easypal_next.network.gallery_store import GalleryStore
+from easypal_next.radio.controller import RadioController
+from easypal_next.waterfall.encoder import SpectrumPainterEncoder
 
 
 @dataclass
@@ -18,11 +41,33 @@ class TransferProgress:
 
 
 class TransferEngine:
-    def __init__(self, config: AppConfig, event_bus: EventBus) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        event_bus: EventBus,
+        tx_modem: ModemInterface,
+        rx_modem: ModemInterface,
+        radio: RadioController,
+        waterfall: SpectrumPainterEncoder,
+        gallery: GalleryStore,
+        modem_bridge: ModemBridge | None = None,
+    ) -> None:
         self._config = config
         self._event_bus = event_bus
+        self._tx_modem = tx_modem
+        self._rx_modem = rx_modem
+        self._radio = radio
+        self._waterfall = waterfall
+        self._gallery = gallery
+        self._bridge = modem_bridge
         self._state = SessionState.IDLE
         self._progress = TransferProgress()
+        self._abort = threading.Event()
+        self._worker: threading.Thread | None = None
+        self._assembler = FileAssembler()
+        self._rx_output_dir = Path(".")
+        self._seq = 0
+        self._initialized = False
 
     @property
     def state(self) -> SessionState:
@@ -31,28 +76,220 @@ class TransferEngine:
     def get_progress(self) -> TransferProgress:
         return self._progress
 
+    def initialize(self) -> None:
+        if self._initialized:
+            return
+        self._tx_modem.open(self._config.modem.mode, self._config.modem.sample_rate)
+        self._rx_modem.open(self._config.modem.mode, self._config.modem.sample_rate)
+        self._rx_modem.set_frame_rx_callback(self._on_modem_rx)
+        if not self._config.transfer.loopback_mode:
+            self._radio.connect()
+            if self._bridge:
+                self._bridge._audio.open(  # noqa: SLF001
+                    self._config.audio.input_device,
+                    self._config.audio.output_device,
+                    self._config.audio.sample_rate,
+                    self._config.audio.block_size,
+                )
+        self._initialized = True
+        self._event_bus.publish(LogEvent(level="info", message="Transfer engine initialized"))
+
     def _set_state(self, state: SessionState) -> None:
         self._state = state
         self._event_bus.publish(SessionStateChangedEvent(state=state))
 
+    def _update_progress(self, done: int, total: int) -> None:
+        self._progress.bytes_done = done
+        self._progress.bytes_total = total
+        pct = (done / total * 100.0) if total else 0.0
+        self._progress.pct = pct
+        self._event_bus.publish(TransferProgressEvent(pct=pct, bytes_done=done, bytes_total=total))
+
+    def _on_modem_rx(self, payload: bytes) -> None:
+        try:
+            ptype, _seq, _total, body = parse_packet(payload)
+        except ValueError:
+            return
+        if ptype == PacketType.FILE_META:
+            meta, chunk_size = unpack_file_meta(body)
+            self._assembler.set_meta(meta, chunk_size)
+            self._set_state(SessionState.RX_ASSEMBLING)
+            self._event_bus.publish(LogEvent(level="info", message=f"RX meta: {meta.filename}"))
+        elif ptype == PacketType.FEC_SHARD:
+            chunk_id, shard_index, data = unpack_fec_shard(body)
+            if self._assembler.add_shard(chunk_id, shard_index, data):
+                self._update_progress(len(self._assembler._chunks), self._assembler.meta.chunk_count if self._assembler.meta else 0)  # noqa: SLF001
+        elif ptype == PacketType.TX_COMPLETE:
+            self._finalize_rx()
+
+    def _finalize_rx(self) -> None:
+        if not self._assembler.is_complete() or self._assembler.meta is None:
+            return
+        meta = self._assembler.meta
+        out_path = self._rx_output_dir / meta.filename
+        try:
+            self._assembler.write_file(out_path)
+        except (ValueError, RuntimeError) as exc:
+            self._event_bus.publish(LogEvent(level="error", message=str(exc)))
+            self._set_state(SessionState.ERROR)
+            return
+        self._event_bus.publish(RxImageReadyEvent(path=str(out_path)))
+        entry = self._gallery.add_image(out_path, callsign=self._config.callsign, direction="rx")
+        self._event_bus.publish(GalleryUpdatedEvent(image_id=entry.id, path=str(out_path)))
+        self._event_bus.publish(LogEvent(level="info", message=f"RX complete: {out_path.name}"))
+        self._set_state(SessionState.RX_DONE)
+        self._set_state(SessionState.IDLE)
+
+    def _next_seq(self) -> int:
+        self._seq += 1
+        return self._seq
+
+    def _modem_send_payload(self, payload: bytes) -> np.ndarray:
+        framed = frame_packet(PacketType.FEC_SHARD, self._next_seq(), 1, payload)
+        if hasattr(self._tx_modem, "encode_preamble"):
+            parts = [self._tx_modem.encode_preamble(), self._tx_modem.encode_frame(framed)]
+            parts.append(self._tx_modem.encode_postamble())
+            return np.concatenate(parts)
+        return self._tx_modem.encode_frame(framed)
+
+    def _send_packet(self, ptype: PacketType, body: bytes, total: int = 1) -> np.ndarray:
+        framed = frame_packet(ptype, self._next_seq(), total, body)
+        parts: list[np.ndarray] = []
+        if hasattr(self._tx_modem, "encode_preamble"):
+            parts.append(self._tx_modem.encode_preamble())
+        parts.append(self._tx_modem.encode_frame(framed))
+        if hasattr(self._tx_modem, "encode_postamble"):
+            parts.append(self._tx_modem.encode_postamble())
+        return np.concatenate(parts)
+
+    def _play_or_buffer(self, audio: np.ndarray, loopback_buffer: list[np.ndarray]) -> None:
+        if self._config.transfer.loopback_mode:
+            loopback_buffer.append(audio)
+        elif self._bridge:
+            self._bridge.queue_tx(audio)
+        time.sleep(0.01)
+
+    def _run_tx(self, file_path: Path) -> None:
+        try:
+            data = file_path.read_bytes()
+            file_hash = hashlib.sha256(data).hexdigest()
+            chunk_size = self._config.fec.chunk_size
+            chunk_count = math.ceil(len(data) / chunk_size) if data else 1
+            encoder = FecEncoder(self._config.fec)
+            meta = FileMeta(
+                filename=file_path.name,
+                file_size=len(data),
+                sha256=file_hash,
+                chunk_count=chunk_count,
+                fec_k=self._config.fec.k,
+                fec_m=self._config.fec.m,
+            )
+
+            loopback_buffer: list[np.ndarray] = []
+            if not self._config.transfer.loopback_mode:
+                self._radio.ptt_on()
+
+            if self._config.waterfall.enabled:
+                self._set_state(SessionState.TX_WATERFALL_HEADER)
+                msg = self._config.waterfall.begin_message.format(callsign=self._config.callsign)
+                self._event_bus.publish(WaterfallPaintStartedEvent(message=msg))
+                header = self._waterfall.text_to_audio(
+                    msg,
+                    font=self._config.waterfall.default_font,
+                    font_size=self._config.waterfall.default_font_size,
+                )
+                self._play_or_buffer(header, loopback_buffer)
+
+            self._set_state(SessionState.TX_ACTIVE)
+            total_shards = chunk_count * self._config.fec.m
+            shards_sent = 0
+
+            meta_audio = self._send_packet(PacketType.FILE_META, pack_file_meta(meta, chunk_size))
+            self._play_or_buffer(meta_audio, loopback_buffer)
+
+            for chunk_id in range(chunk_count):
+                if self._abort.is_set():
+                    break
+                start = chunk_id * chunk_size
+                chunk = data[start : start + chunk_size]
+                shards = encoder.encode_chunk(chunk)
+                for shard_index, shard in enumerate(shards):
+                    if self._abort.is_set():
+                        break
+                    body = pack_fec_shard(chunk_id, shard_index, shard)
+                    audio = self._send_packet(PacketType.FEC_SHARD, body, total=total_shards)
+                    self._play_or_buffer(audio, loopback_buffer)
+                    shards_sent += 1
+                    self._update_progress(shards_sent, total_shards)
+
+            complete_audio = self._send_packet(PacketType.TX_COMPLETE, b"")
+            self._play_or_buffer(complete_audio, loopback_buffer)
+
+            if self._config.waterfall.enabled and self._config.waterfall.end_message:
+                self._set_state(SessionState.TX_WATERFALL_FOOTER)
+                footer = self._waterfall.text_to_audio(
+                    self._config.waterfall.end_message.format(callsign=self._config.callsign),
+                    font=self._config.waterfall.default_font,
+                    font_size=self._config.waterfall.default_font_size,
+                )
+                self._play_or_buffer(footer, loopback_buffer)
+
+            if self._config.transfer.loopback_mode:
+                silence = np.zeros(int(self._tx_modem.modem_sample_rate * 0.1), dtype=np.int16)
+                loopback_buffer.append(silence)
+                combined = np.concatenate(loopback_buffer)
+                self._assembler = FileAssembler()
+                self._set_state(SessionState.RX_ASSEMBLING)
+                self._rx_modem.decode_samples(combined)
+                self._finalize_rx()
+            elif self._bridge:
+                time.sleep(0.5)
+
+            if not self._config.transfer.loopback_mode:
+                self._radio.ptt_off()
+
+            self._set_state(SessionState.TX_DONE)
+            self._event_bus.publish(LogEvent(level="info", message="TX complete"))
+            self._set_state(SessionState.IDLE)
+        except Exception as exc:
+            self._event_bus.publish(LogEvent(level="error", message=f"TX failed: {exc}"))
+            self._set_state(SessionState.ERROR)
+            self._set_state(SessionState.IDLE)
+        finally:
+            self._abort.clear()
+
     def start_tx(self, file_path: Path) -> None:
         if self._state != SessionState.IDLE:
             raise RuntimeError(f"Cannot start TX from state {self._state}")
+        self.initialize()
+        self._abort.clear()
+        self._seq = 0
         self._event_bus.publish(LogEvent(level="info", message=f"TX armed: {file_path}"))
-        if self._config.waterfall.enabled:
-            self._set_state(SessionState.TX_WATERFALL_HEADER)
-        else:
-            self._set_state(SessionState.TX_ARMED)
-        # TODO: waterfall header → modem TX → optional footer
-        self._set_state(SessionState.TX_ACTIVE)
+        self._set_state(SessionState.TX_ARMED)
+        self._worker = threading.Thread(target=self._run_tx, args=(file_path,), daemon=True)
+        self._worker.start()
 
     def start_rx(self, output_dir: Path) -> None:
         if self._state != SessionState.IDLE:
             raise RuntimeError(f"Cannot start RX from state {self._state}")
+        self.initialize()
+        self._rx_output_dir = output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
+        self._assembler = FileAssembler()
+        self._abort.clear()
+        if not self._config.transfer.loopback_mode and self._bridge:
+            self._bridge.start()
         self._event_bus.publish(LogEvent(level="info", message=f"RX listening: {output_dir}"))
         self._set_state(SessionState.RX_LISTEN)
 
     def abort(self) -> None:
+        self._abort.set()
+        if self._bridge:
+            self._bridge.stop()
+        if not self._config.transfer.loopback_mode:
+            try:
+                self._radio.ptt_off()
+            except Exception:
+                pass
         self._event_bus.publish(LogEvent(level="warning", message="Transfer aborted"))
         self._set_state(SessionState.IDLE)

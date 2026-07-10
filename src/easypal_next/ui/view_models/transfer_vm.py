@@ -1,18 +1,23 @@
-"""Transfer view model (Qt signal bridge stub)."""
+"""Transfer view model with Qt signals."""
 
 from __future__ import annotations
 
-from easypal_next.core.events import EventBus, TransferProgressEvent
+from PySide6.QtCore import QObject, Signal
+
+from easypal_next.core.events import EventBus, SessionStateChangedEvent, TransferProgressEvent
 
 
-class TransferViewModel:
+class TransferViewModel(QObject):
+    progress_changed = Signal(float, int, int)
+    state_changed = Signal(str)
+
     def __init__(self, event_bus: EventBus) -> None:
-        self._last_progress: TransferProgressEvent | None = None
+        super().__init__()
         event_bus.subscribe(TransferProgressEvent, self._on_progress)
+        event_bus.subscribe(SessionStateChangedEvent, self._on_state)
 
     def _on_progress(self, event: TransferProgressEvent) -> None:
-        self._last_progress = event
+        self.progress_changed.emit(event.pct, event.bytes_done, event.bytes_total)
 
-    @property
-    def last_progress(self) -> TransferProgressEvent | None:
-        return self._last_progress
+    def _on_state(self, event: SessionStateChangedEvent) -> None:
+        self.state_changed.emit(event.state.value)

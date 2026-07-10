@@ -18,7 +18,7 @@ from easypal_next.network.gallery_store import GalleryStore
 router = APIRouter(prefix="/api/v1")
 
 
-def create_router(gallery: GalleryStore, get_state, get_progress) -> APIRouter:
+def create_router(gallery: GalleryStore, get_state, get_progress, abort_transfer) -> APIRouter:
     @router.get("/status", response_model=StatusResponse)
     def status() -> StatusResponse:
         state, callsign, modem_mode = get_state()
@@ -40,7 +40,8 @@ def create_router(gallery: GalleryStore, get_state, get_progress) -> APIRouter:
 
     @router.post("/transfer/abort")
     def transfer_abort() -> dict[str, str]:
-        return {"status": "not_implemented"}
+        abort_transfer()
+        return {"status": "aborted"}
 
     @router.get("/gallery", response_model=list[GalleryItemResponse])
     def gallery_list() -> list[GalleryItemResponse]:

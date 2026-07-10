@@ -94,6 +94,10 @@ class CommunityServerConfig(BaseModel):
     ftp_remote_dir: str = "/"
 
 
+class TransferConfig(BaseModel):
+    loopback_mode: bool = True
+
+
 class AppConfig(BaseModel):
     callsign: str = "N0CALL"
     audio: AudioConfig = Field(default_factory=AudioConfig)
@@ -103,3 +107,4 @@ class AppConfig(BaseModel):
     waterfall: WaterfallConfig = Field(default_factory=WaterfallConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     community: CommunityServerConfig = Field(default_factory=CommunityServerConfig)
+    transfer: TransferConfig = Field(default_factory=TransferConfig)
