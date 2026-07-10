@@ -26,9 +26,12 @@ Record end-to-end validation before any public release. Update this file after e
 
 | Step | Result | Notes |
 |------|--------|-------|
-| Launch `python -m easypal_next` | _pending_ | |
-| LoadPic → small JPEG/bin → Transmit | _pending_ | Default `transfer.loopback_mode: true` |
-| RX pane + gallery update | _pending_ | |
+| Launch `python -m easypal_next` | _pending_ | Shared `app.qss` theme |
+| Settings tabs (paths, COM, waterfall) | _pending_ | Gallery/received dirs, radio profile |
+| LoadPic → small JPEG → Transmit | _pending_ | Real thumbnails (not blue placeholder) |
+| TX + RX badges in gallery pane | _pending_ | Filter All / RX / TX |
+| Waterfall scrolls during loopback TX | _pending_ | Option A live spectrum |
+| Send WFTxt (text-only) | _pending_ | Toolbar action |
 
 ## On-air transfer (manual)
 

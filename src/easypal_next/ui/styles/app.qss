@@ -1,0 +1,116 @@
+/* EasyPal-Next desktop theme */
+
+QMainWindow, QDialog, QWidget {
+    background-color: #0f1419;
+    color: #e7ecf3;
+}
+
+QLabel {
+    color: #e7ecf3;
+}
+
+QGroupBox {
+    border: 1px solid #1e4d8c;
+    border-radius: 6px;
+    margin-top: 10px;
+    padding-top: 8px;
+    font-weight: bold;
+    color: #f5c518;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+}
+
+QToolBar {
+    background: #1a3a5c;
+    spacing: 8px;
+    border: none;
+    padding: 4px;
+}
+
+QToolBar QToolButton {
+    color: #e7ecf3;
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+
+QToolBar QToolButton:hover {
+    background: #1e4d8c;
+}
+
+QPushButton {
+    background: #1e4d8c;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 14px;
+}
+
+QPushButton:hover {
+    background: #2563a8;
+}
+
+QPushButton:pressed {
+    background: #1a3a5c;
+}
+
+QLineEdit, QComboBox, QSpinBox, QTextEdit {
+    background: #1a1f28;
+    color: #e7ecf3;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 4px;
+}
+
+QTabWidget::pane {
+    border: 1px solid #1e4d8c;
+    border-radius: 4px;
+}
+
+QTabBar::tab {
+    background: #1a3a5c;
+    color: #e7ecf3;
+    padding: 8px 16px;
+    margin-right: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+QTabBar::tab:selected {
+    background: #1e4d8c;
+    color: #f5c518;
+}
+
+QProgressBar {
+    border: 1px solid #333;
+    border-radius: 4px;
+    text-align: center;
+    background: #1a1f28;
+    color: #e7ecf3;
+}
+
+QProgressBar::chunk {
+    background-color: #f5c518;
+    border-radius: 3px;
+}
+
+QStatusBar {
+    background: #1a3a5c;
+    color: #e7ecf3;
+}
+
+QScrollArea {
+    border: none;
+}
+
+QCheckBox {
+    spacing: 6px;
+}
+
+QSplitter::handle {
+    background: #1e4d8c;
+    width: 3px;
+}

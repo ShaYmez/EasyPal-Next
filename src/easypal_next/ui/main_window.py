@@ -4,30 +4,32 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QProgressBar,
-    QScrollArea,
-    QSizePolicy,
     QSplitter,
     QStatusBar,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
 
+from easypal_next import __version__
 from easypal_next.app.bootstrap import AppContext
 from easypal_next.app.paths import brand_icon_path, brand_logo_path
+from easypal_next.config.loader import save_config
 from easypal_next.core.events import GalleryUpdatedEvent, LogEvent, SessionStateChangedEvent
 from easypal_next.core.session import SessionState
 from easypal_next.network.util import gallery_urls
+from easypal_next.ui.menus import build_menus, build_toolbar
+from easypal_next.ui.theme import apply_theme
 from easypal_next.ui.view_models.transfer_vm import TransferViewModel
 from easypal_next.ui.widgets.log_panel import LogPanel
 from easypal_next.ui.widgets.rx_pane import RxPane
@@ -43,190 +45,277 @@ class MainWindow(QMainWindow):
         self._selected_file: Path | None = None
         self._vm = TransferViewModel(context.event_bus)
         self.setWindowTitle("EasyPal-Next")
-        self.setMinimumSize(880, 560)
-        self._fit_to_available_screen()
-        self.setStyleSheet(
-            "QMainWindow { background-color: #0f1419; }"
-            "QLabel { color: #e7ecf3; }"
-            "QToolBar { background: #1a3a5c; spacing: 8px; }"
-            "QProgressBar::chunk { background-color: #f5c518; }"
-        )
-
-        central = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        layout = QVBoxLayout(central)
-
-        brand_row = QHBoxLayout()
-        logo_path = brand_logo_path()
-        icon_path = brand_icon_path()
-        if logo_path.is_file():
-            logo_label = QLabel()
-            logo_label.setPixmap(
-                QPixmap(str(logo_path)).scaledToHeight(
-                    48, Qt.TransformationMode.SmoothTransformation
-                )
-            )
-            logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            brand_row.addWidget(logo_label)
-        elif icon_path.is_file():
-            icon_label = QLabel()
-            icon_label.setPixmap(
-                QPixmap(str(icon_path)).scaled(
-                    64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                )
-            )
-            brand_row.addWidget(icon_label)
-            title = QLabel("EasyPal-Next")
-            title.setStyleSheet("font-size: 28px; font-weight: bold; color: #f5c518;")
-            brand_row.addWidget(title)
-        brand_row.addStretch()
-        layout.addLayout(brand_row)
-
-        header = QLabel(
-            f"{context.config.callsign} · {context.config.modem.mode}"
-            f" · {'loopback' if context.config.transfer.loopback_mode else 'on-air'}"
-        )
-        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(header)
+        self.setMinimumSize(960, 600)
 
         local_url, lan_url = gallery_urls(context.config.network.port)
-        gallery_lines = [f"Laptop gallery: {local_url}"]
-        if lan_url:
-            gallery_lines.append(f"Phone/tablet: {lan_url}")
-        self._gallery_info = QLabel(" · ".join(gallery_lines))
-        self._gallery_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._gallery_info.setWordWrap(True)
-        layout.addWidget(self._gallery_info)
+        self._gallery_url = local_url
+        self._actions = build_menus(self, local_url)
+        build_toolbar(self, self._actions)
 
-        self._status_label = QLabel("Session: idle")
-        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._status_label)
+        central = QWidget()
+        root = QVBoxLayout(central)
+        root.setContentsMargins(6, 4, 6, 4)
+        root.setSpacing(4)
 
+        transfer_box = QGroupBox("Transfer")
+        transfer_layout = QVBoxLayout(transfer_box)
+        transfer_layout.setContentsMargins(6, 4, 6, 4)
+        transfer_layout.setSpacing(2)
+        self._file_label = QLabel("No file selected")
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
-        layout.addWidget(self._progress)
+        self._progress.setValue(0)
+        self._progress.setVisible(False)
+        transfer_layout.addWidget(self._file_label)
+        transfer_layout.addWidget(self._progress)
+        transfer_box.setMaximumHeight(56)
+        root.addWidget(transfer_box)
 
-        self._file_label = QLabel("No file selected")
-        self._file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._file_label)
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_splitter.setChildrenCollapsible(False)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
+        gallery_box = QGroupBox("Gallery")
+        gallery_layout = QVBoxLayout(gallery_box)
+        gallery_layout.setContentsMargins(4, 4, 4, 4)
         self._rx_pane = RxPane(context.gallery)
-        self._waterfall = WaterfallWidget(context.event_bus)
-        splitter.addWidget(self._rx_pane)
-        splitter.addWidget(self._waterfall)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([1, 1])
-        layout.addWidget(splitter, stretch=1)
+        gallery_layout.addWidget(self._rx_pane)
+        main_splitter.addWidget(gallery_box)
 
-        bottom = QHBoxLayout()
+        waterfall_box = QGroupBox("Waterfall")
+        waterfall_layout = QVBoxLayout(waterfall_box)
+        waterfall_layout.setContentsMargins(4, 4, 4, 4)
+        self._waterfall = WaterfallWidget(context.event_bus, context.config.waterfall)
+        waterfall_layout.addWidget(self._waterfall)
+        main_splitter.addWidget(waterfall_box)
+        main_splitter.setStretchFactor(0, 45)
+        main_splitter.setStretchFactor(1, 55)
+
+        footer_splitter = QSplitter(Qt.Orientation.Horizontal)
+        footer_splitter.setChildrenCollapsible(False)
+        footer_splitter.setMaximumHeight(100)
+
+        wftxt_box = QGroupBox("WFTxt")
+        wftxt_layout = QVBoxLayout(wftxt_box)
+        wftxt_layout.setContentsMargins(6, 4, 6, 4)
         self._wftxt = WaterfallTextEditor(context.config.waterfall)
-        self._wftxt.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        bottom.addWidget(self._wftxt, stretch=1)
-        self._log_panel = LogPanel(context.event_bus)
-        self._log_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        bottom.addWidget(self._log_panel, stretch=2)
-        layout.addLayout(bottom)
+        wftxt_layout.addWidget(self._wftxt)
+        footer_splitter.addWidget(wftxt_box)
 
-        scroll.setWidget(central)
-        self.setCentralWidget(scroll)
-        self.setStatusBar(QStatusBar())
-        self.statusBar().showMessage("Ready")
+        log_box = QGroupBox("Log")
+        log_layout = QVBoxLayout(log_box)
+        log_layout.setContentsMargins(6, 4, 6, 4)
+        self._log_panel = LogPanel(
+            context.event_bus,
+            dark=context.config.ui.theme == "dark",
+        )
+        log_layout.addWidget(self._log_panel)
+        footer_splitter.addWidget(log_box)
+        footer_splitter.setStretchFactor(0, 1)
+        footer_splitter.setStretchFactor(1, 1)
 
-        toolbar = QToolBar("Main")
-        self.addToolBar(toolbar)
-        toolbar.addAction("LoadPic", self._load_pic)
-        toolbar.addAction("Transmit", self._transmit)
-        toolbar.addAction("Receive", self._receive)
-        toolbar.addAction("Abort", self._abort)
-        toolbar.addAction("Settings", self._open_settings)
+        body_splitter = QSplitter(Qt.Orientation.Vertical)
+        body_splitter.setChildrenCollapsible(False)
+        body_splitter.addWidget(main_splitter)
+        body_splitter.addWidget(footer_splitter)
+        body_splitter.setStretchFactor(0, 1)
+        body_splitter.setStretchFactor(1, 0)
+        root.addWidget(body_splitter, stretch=1)
+
+        self.setCentralWidget(central)
+        self._build_status_bar(local_url, lan_url)
+        self._connect_actions(lan_url)
+        self._sync_theme_checks()
+        self._actions.waterfall_tx_on_file.setChecked(context.config.waterfall.enabled)
+        self._waterfall.set_session_context(
+            SessionState.IDLE, context.config.transfer.loopback_mode
+        )
+        self._update_status_text()
 
         context.event_bus.subscribe(SessionStateChangedEvent, self._on_state_changed)
         context.event_bus.subscribe(LogEvent, self._on_log)
         context.event_bus.subscribe(GalleryUpdatedEvent, self._on_gallery_updated)
         self._vm.progress_changed.connect(self._on_progress)
-        self._vm.state_changed.connect(lambda s: self._status_label.setText(f"Session: {s}"))
+        self._vm.state_changed.connect(self._on_vm_state)
 
-    def _fit_to_available_screen(self) -> None:
+        self._fit_to_screen()
+
+    def _build_status_bar(self, local_url: str, lan_url: str | None) -> None:
+        bar = QStatusBar()
+        self.setStatusBar(bar)
+        self._status_main = QLabel()
+        bar.addWidget(self._status_main, stretch=1)
+        self._gallery_link = QLabel(f'<a href="{local_url}">Gallery</a>')
+        self._gallery_link.setObjectName("galleryLink")
+        self._gallery_link.setOpenExternalLinks(True)
+        bar.addPermanentWidget(self._gallery_link)
+        if lan_url:
+            lan_link = QLabel(f'<a href="{lan_url}">LAN</a>')
+            lan_link.setObjectName("galleryLink")
+            lan_link.setOpenExternalLinks(True)
+            bar.addPermanentWidget(lan_link)
+
+    def _connect_actions(self, lan_url: str | None) -> None:
+        a = self._actions
+        a.load_pic.triggered.connect(self._load_pic)
+        a.preferences.triggered.connect(self._open_settings)
+        a.exit_app.triggered.connect(self.close)
+        a.transmit.triggered.connect(self._transmit)
+        a.receive.triggered.connect(self._receive)
+        a.abort.triggered.connect(self._abort)
+        a.send_wftxt.triggered.connect(self._send_wftxt)
+        a.waterfall_tx_on_file.toggled.connect(self._on_waterfall_toggled)
+        a.theme_light.triggered.connect(lambda: self._set_theme("light"))
+        a.theme_dark.triggered.connect(lambda: self._set_theme("dark"))
+        a.open_gallery.triggered.connect(
+            lambda: QDesktopServices.openUrl(QUrl(self._gallery_url))
+        )
+        a.about.triggered.connect(self._show_about)
+        self._wftxt.send_requested.connect(self._send_wftxt)
+
+    def _fit_to_screen(self) -> None:
         screen = QApplication.primaryScreen()
         if screen is None:
-            self.resize(1024, 700)
+            self.showMaximized()
             return
-        available = screen.availableGeometry()
-        width = min(1100, max(880, int(available.width() * 0.92)))
-        height = min(820, max(560, int(available.height() * 0.88)))
-        self.resize(width, height)
-        frame = self.frameGeometry()
-        frame.moveCenter(available.center())
-        self.move(frame.topLeft())
+        geo = screen.availableGeometry()
+        self.setGeometry(geo)
+        self.showMaximized()
+
+    def _sync_theme_checks(self) -> None:
+        is_light = self._context.config.ui.theme == "light"
+        self._actions.theme_light.setChecked(is_light)
+        self._actions.theme_dark.setChecked(not is_light)
+
+    def _set_theme(self, theme: str) -> None:
+        self._context.config.ui.theme = theme
+        save_config(self._context.config)
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, theme)
+        self._log_panel.set_dark(theme == "dark")
+        self._sync_theme_checks()
+
+    def _update_status_text(self) -> None:
+        cfg = self._context.config
+        mode = "loopback" if cfg.transfer.loopback_mode else "on-air"
+        state = self._context.transfer_engine.state.value
+        file_part = f" · {self._selected_file.name}" if self._selected_file else ""
+        self._status_main.setText(f"{cfg.callsign} · {cfg.modem.mode} · {mode} · {state}{file_part}")
+
+    def _persist_waterfall_config(self) -> None:
+        self._wftxt.apply_to_config(self._context.config.waterfall)
+        self._context.config.waterfall.enabled = self._actions.waterfall_tx_on_file.isChecked()
+        save_config(self._context.config)
+
+    def _on_waterfall_toggled(self, checked: bool) -> None:
+        self._context.config.waterfall.enabled = checked
+        save_config(self._context.config)
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._context, self)
         if dialog.exec():
             config = dialog.apply()
-            self._wftxt.apply_to_config(config.waterfall)
-            self._status_label.setText(
-                f"Session: idle · {'loopback' if config.transfer.loopback_mode else 'on-air'}"
-            )
+            self._wftxt.sync_from_config(config.waterfall)
+            self._waterfall.update_config(config.waterfall)
+            self._actions.waterfall_tx_on_file.setChecked(config.waterfall.enabled)
+            if config.ui.theme != self._context.config.ui.theme:
+                self._set_theme(config.ui.theme)
+            self._update_status_text()
             QMessageBox.information(
                 self,
                 "Settings",
-                "Settings saved. Restart the app for loopback/on-air mode changes to take full effect.",
+                "Settings saved. Restart for loopback/on-air and path changes.",
             )
 
     def _load_pic(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select image or file",
+            "LoadPic — select image or file",
             "",
             "Images (*.png *.jpg *.jpeg *.gif);;All files (*.*)",
         )
         if path:
             self._selected_file = Path(path)
             self._file_label.setText(self._selected_file.name)
+            self._update_status_text()
 
     def _transmit(self) -> None:
         if self._selected_file is None:
-            QMessageBox.warning(self, "Transmit", "Select a file with LoadPic first.")
+            QMessageBox.warning(self, "Transmit", "LoadPic first — select a file to transmit.")
             return
         if self._context.transfer_engine.state != SessionState.IDLE:
             QMessageBox.warning(self, "Transmit", "Transfer already in progress.")
             return
-        self._wftxt.apply_to_config(self._context.config.waterfall)
+        self._persist_waterfall_config()
         try:
             self._context.transfer_engine.start_tx(self._selected_file)
         except Exception as exc:
             QMessageBox.critical(self, "Transmit", str(exc))
 
+    def _send_wftxt(self) -> None:
+        if self._context.transfer_engine.state != SessionState.IDLE:
+            QMessageBox.warning(self, "Send WFTxt", "Transfer already in progress.")
+            return
+        self._persist_waterfall_config()
+        message = self._wftxt.begin_message()
+        if not message.strip():
+            QMessageBox.warning(self, "Send WFTxt", "Enter a message in the WFTxt field.")
+            return
+        self._wftxt.set_transmitting(True)
+        try:
+            self._context.transfer_engine.start_waterfall_tx(message)
+        except Exception as exc:
+            self._wftxt.set_transmitting(False)
+            QMessageBox.critical(self, "Send WFTxt", str(exc))
+
     def _receive(self) -> None:
         if self._context.transfer_engine.state != SessionState.IDLE:
             QMessageBox.warning(self, "Receive", "Transfer already in progress.")
             return
-        out_dir = self._context.gallery.received_dir()
         try:
-            self._context.transfer_engine.start_rx(out_dir)
+            self._context.transfer_engine.start_rx(self._context.gallery.received_dir())
         except Exception as exc:
             QMessageBox.critical(self, "Receive", str(exc))
 
     def _abort(self) -> None:
         self._context.transfer_engine.abort()
 
+    def _show_about(self) -> None:
+        logo = brand_logo_path()
+        icon = brand_icon_path()
+        QMessageBox.about(
+            self,
+            "About EasyPal-Next",
+            f"<b>EasyPal-Next</b> v{__version__}<br>"
+            "Digital SSTV successor — Shane Daley M0VUB (ShaYmez)<br><br>"
+            f"Gallery: {self._gallery_url}",
+        )
+
     def _on_state_changed(self, event: SessionStateChangedEvent) -> None:
-        self._status_label.setText(f"Session: {event.state.value}")
-        self.statusBar().showMessage(f"State → {event.state.value}", 5000)
+        self._waterfall.set_session_context(
+            event.state, self._context.config.transfer.loopback_mode
+        )
+        if event.state == SessionState.IDLE:
+            self._wftxt.set_transmitting(False)
+        self._update_status_text()
+        self.statusBar().showMessage(f"State → {event.state.value}", 4000)
+
+    def _on_vm_state(self, state: str) -> None:
+        self._update_status_text()
 
     def _on_log(self, event: LogEvent) -> None:
-        self.statusBar().showMessage(event.message, 8000)
+        self.statusBar().showMessage(event.message, 6000)
 
     def _on_progress(self, pct: float, done: int, total: int) -> None:
+        visible = pct > 0 or total > 0
+        self._progress.setVisible(visible)
         self._progress.setValue(int(pct))
-        self.statusBar().showMessage(f"Progress: {done}/{total} ({pct:.1f}%)", 3000)
+        if visible:
+            self.statusBar().showMessage(f"Progress: {done}/{total} ({pct:.1f}%)", 3000)
 
     def _on_gallery_updated(self, event: GalleryUpdatedEvent) -> None:
         self._rx_pane.add_entry(event.image_id)
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        self._context.transfer_engine.abort()
+        super().closeEvent(event)

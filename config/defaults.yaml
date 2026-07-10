@@ -39,6 +39,9 @@ waterfall:
   begin_wav: null
   end_wav: null
   tx_monitor: true
+  colormap: green
+  min_db: -80.0
+  max_db: 0.0
 
 network:
   enabled: true
@@ -61,3 +64,6 @@ community:
 
 transfer:
   loopback_mode: true
+
+ui:
+  theme: light

@@ -75,6 +75,6 @@ def create_router(gallery: GalleryStore, get_state, get_progress, abort_transfer
         path = Path(entry.thumb_path)
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Thumbnail file missing")
-        return FileResponse(path)
+        return FileResponse(path, media_type="image/jpeg")
 
     return router

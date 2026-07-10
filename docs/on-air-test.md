@@ -11,7 +11,7 @@ EasyPal-Next Phase 3 validates error-corrected file transfer over a real audio p
 
 ## Configuration
 
-Edit `%APPDATA%\EasyPal-Next\config.yaml` or use **Settings** in the app:
+Use **Settings** in the app (General, Audio, Radio, Waterfall tabs) or edit `%APPDATA%\EasyPal-Next\config.yaml`:
 
 ```yaml
 transfer:
@@ -20,14 +20,29 @@ transfer:
 audio:
   input_device: <mic/input index>
   output_device: <radio/soundcard output index>
+  sample_rate: 48000
+  block_size: 1024
+
+network:
+  gallery_dir: C:\Users\You\EasyPal-Next\gallery
+  received_dir: C:\Users\You\EasyPal-Next\received
 
 radio:
-  profile: vox
+  profile: vox          # vox | serial | cat
   pre_tx_delay_ms: 300
   post_tx_delay_ms: 200
+  # serial: port, line (RTS/DTR), active_low, baud
+  # cat: port, rig_model (3073 default), baud, ptt_method (rig/data)
+
+waterfall:
+  enabled: true
+  tx_monitor: true
+  begin_message: "<< EASYPAL >>"
 ```
 
-Set your callsign in config or via Settings.
+**SignaLink / Digirig:** set audio input/output to the USB sound card; use **VOX** on the interface or **Serial PTT** / **Hamlib CAT** on the Radio tab (COM port dropdown with Refresh).
+
+Set your callsign in **General** or config. Restart the app after changing loopback mode or gallery/received paths.
 
 ## Two-Station Test (recommended)
 
@@ -54,8 +69,10 @@ Set your callsign in config or via Settings.
 - [ ] `verify-codec2.py` passes
 - [ ] `loopback-transfer.py` SHA256 match
 - [ ] Waterfall header visible on spectrum (if enabled)
+- [ ] Live waterfall scrolls during loopback TX (Settings → Waterfall → tx_monitor)
+- [ ] Send WFTxt toolbar sends text-only waterfall (no file)
 - [ ] PTT activates before audio (on-air mode)
-- [ ] RX image appears in gallery
+- [ ] RX and TX entries show direction badges in gallery (desktop + LAN)
 - [ ] SHA256 verified on received file
 
 ## Troubleshooting

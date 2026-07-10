@@ -1,0 +1,149 @@
+/* EasyPal-Next light theme */
+
+QMainWindow, QDialog, QWidget {
+    background-color: #f0f2f5;
+    color: #1a1a1a;
+}
+
+QLabel {
+    color: #1a1a1a;
+}
+
+QGroupBox {
+    border: 1px solid #1e4d8c;
+    border-radius: 4px;
+    margin-top: 8px;
+    padding-top: 6px;
+    font-weight: bold;
+    color: #1e4d8c;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+    color: #c49a00;
+}
+
+QMenuBar {
+    background: #ffffff;
+    border-bottom: 1px solid #d0d7de;
+}
+
+QMenuBar::item:selected {
+    background: #e8eef5;
+}
+
+QToolBar {
+    background: #ffffff;
+    border-bottom: 1px solid #d0d7de;
+    spacing: 4px;
+    padding: 2px 4px;
+}
+
+QToolBar QToolButton {
+    color: #1a1a1a;
+    padding: 4px 10px;
+    border-radius: 3px;
+}
+
+QToolBar QToolButton:hover {
+    background: #e8eef5;
+}
+
+QPushButton {
+    background: #1e4d8c;
+    color: #ffffff;
+    border: none;
+    border-radius: 3px;
+    padding: 4px 12px;
+}
+
+QPushButton:hover {
+    background: #2563a8;
+}
+
+QPushButton:pressed {
+    background: #1a3a5c;
+}
+
+QPushButton#primaryButton {
+    background: #1e4d8c;
+    font-weight: bold;
+}
+
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit {
+    background: #ffffff;
+    color: #1a1a1a;
+    border: 1px solid #c8d0d8;
+    border-radius: 3px;
+    padding: 2px 4px;
+}
+
+QTabWidget::pane {
+    border: 1px solid #c8d0d8;
+}
+
+QTabBar::tab {
+    background: #e8eef5;
+    padding: 6px 14px;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    background: #ffffff;
+    color: #1e4d8c;
+    font-weight: bold;
+}
+
+QProgressBar {
+    border: 1px solid #c8d0d8;
+    border-radius: 3px;
+    text-align: center;
+    background: #ffffff;
+    max-height: 18px;
+}
+
+QProgressBar::chunk {
+    background-color: #f5c518;
+    border-radius: 2px;
+}
+
+QStatusBar {
+    background: #ffffff;
+    border-top: 1px solid #d0d7de;
+    color: #333333;
+}
+
+QStatusBar QLabel#galleryLink {
+    color: #1e4d8c;
+    text-decoration: underline;
+}
+
+QListWidget {
+    background: #ffffff;
+    border: 1px solid #d0d7de;
+}
+
+QListWidget::item:selected {
+    background: #e8eef5;
+    border: 1px solid #1e4d8c;
+}
+
+QPlainTextEdit#logView, QTextEdit#logView {
+    background: #fafafa;
+    color: #333333;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+    border: 1px solid #d0d7de;
+}
+
+QLabel#waterfallDisplay {
+    background: #0a0a12;
+    border: 1px solid #333;
+    color: #888888;
+}
+
+QSplitter::handle {
+    background: #c8d0d8;
+}

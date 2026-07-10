@@ -1,22 +1,34 @@
-"""Application settings dialog."""
+"""Application settings dialog with tabbed configuration."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
+    QRadioButton,
+    QSpinBox,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from easypal_next.app.bootstrap import AppContext
+from easypal_next.app.paths import user_gallery_dir
 from easypal_next.config.loader import save_config
 from easypal_next.config.schema import AppConfig, CatRadioConfig, SerialPttConfig, VoxManualConfig
+from easypal_next.radio.serial_ports import list_serial_ports
 
 
 class SettingsDialog(QDialog):
@@ -24,35 +36,16 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self._context = context
         self.setWindowTitle("EasyPal-Next Settings")
+        self.setMinimumSize(520, 420)
 
-        self._callsign = QLineEdit(context.config.callsign)
-        self._loopback = QCheckBox("Loopback mode (no PTT / sound card for modem test)")
-        self._loopback.setChecked(context.config.transfer.loopback_mode)
+        cfg = context.config
+        tabs = QTabWidget()
 
-        self._input_device = QComboBox()
-        self._output_device = QComboBox()
-        self._populate_devices()
-
-        self._radio_profile = QComboBox()
-        self._radio_profile.addItem("VOX / Manual PTT", "vox")
-        self._radio_profile.addItem("Serial PTT", "serial")
-        self._radio_profile.addItem("Hamlib CAT", "cat")
-        current = getattr(context.config.radio, "profile", "vox")
-        for i in range(self._radio_profile.count()):
-            if self._radio_profile.itemData(i) == current:
-                self._radio_profile.setCurrentIndex(i)
-
-        self._serial_port = QLineEdit(
-            context.config.radio.port if isinstance(context.config.radio, SerialPttConfig) else "COM4"
-        )
-
-        form = QFormLayout()
-        form.addRow("Callsign:", self._callsign)
-        form.addRow(self._loopback)
-        form.addRow("Audio input:", self._input_device)
-        form.addRow("Audio output:", self._output_device)
-        form.addRow("Radio profile:", self._radio_profile)
-        form.addRow("Serial PTT port:", self._serial_port)
+        tabs.addTab(self._build_general_tab(cfg), "General")
+        tabs.addTab(self._build_audio_tab(cfg), "Audio")
+        tabs.addTab(self._build_radio_tab(cfg), "Radio")
+        tabs.addTab(self._build_waterfall_tab(cfg), "Waterfall")
+        tabs.addTab(self._build_appearance_tab(cfg), "Appearance")
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -61,11 +54,234 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
+        layout.addWidget(tabs)
         layout.addWidget(buttons)
 
-    def _populate_devices(self) -> None:
-        cfg = self._context.config.audio
+    def _build_general_tab(self, cfg: AppConfig) -> QWidget:
+        widget = QWidget()
+        form = QFormLayout(widget)
+
+        self._callsign = QLineEdit(cfg.callsign)
+        self._loopback = QCheckBox("Loopback mode (no PTT / sound card for modem test)")
+        self._loopback.setChecked(cfg.transfer.loopback_mode)
+
+        default_gallery = str(user_gallery_dir())
+        self._gallery_dir = QLineEdit(cfg.network.gallery_dir or default_gallery)
+        gallery_row = QHBoxLayout()
+        gallery_row.addWidget(self._gallery_dir)
+        gallery_browse = QPushButton("Browse…")
+        gallery_browse.clicked.connect(lambda: self._browse_dir(self._gallery_dir))
+        gallery_row.addWidget(gallery_browse)
+
+        received_default = str(Path(self._gallery_dir.text()).parent / "received")
+        self._received_dir = QLineEdit(cfg.network.received_dir or received_default)
+        received_row = QHBoxLayout()
+        received_row.addWidget(self._received_dir)
+        received_browse = QPushButton("Browse…")
+        received_browse.clicked.connect(lambda: self._browse_dir(self._received_dir))
+        received_row.addWidget(received_browse)
+
+        form.addRow("Callsign:", self._callsign)
+        form.addRow(self._loopback)
+        form.addRow("Gallery directory:", gallery_row)
+        form.addRow("Received files directory:", received_row)
+        form.addRow(
+            QLabel("Restart the app after changing paths or loopback mode.")
+        )
+        return widget
+
+    def _build_audio_tab(self, cfg: AppConfig) -> QWidget:
+        widget = QWidget()
+        form = QFormLayout(widget)
+
+        self._input_device = QComboBox()
+        self._output_device = QComboBox()
+        self._populate_devices(cfg)
+
+        self._sample_rate = QSpinBox()
+        self._sample_rate.setRange(8000, 192000)
+        self._sample_rate.setSingleStep(1000)
+        self._sample_rate.setValue(cfg.audio.sample_rate)
+
+        self._block_size = QSpinBox()
+        self._block_size.setRange(256, 8192)
+        self._block_size.setSingleStep(256)
+        self._block_size.setValue(cfg.audio.block_size)
+
+        form.addRow("Audio input:", self._input_device)
+        form.addRow("Audio output:", self._output_device)
+        form.addRow("Sample rate:", self._sample_rate)
+        form.addRow("Block size:", self._block_size)
+        return widget
+
+    def _build_radio_tab(self, cfg: AppConfig) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        self._radio_profile = QComboBox()
+        self._radio_profile.addItem("VOX / Manual PTT", "vox")
+        self._radio_profile.addItem("Serial PTT", "serial")
+        self._radio_profile.addItem("Hamlib CAT", "cat")
+        current = getattr(cfg.radio, "profile", "vox")
+        for i in range(self._radio_profile.count()):
+            if self._radio_profile.itemData(i) == current:
+                self._radio_profile.setCurrentIndex(i)
+
+        self._com_port = QComboBox()
+        self._com_port.setEditable(True)
+        initial_port = getattr(cfg.radio, "port", "")
+        self._refresh_ports(initial_port or None)
+
+        self._vox_pre = QSpinBox()
+        self._vox_pre.setRange(0, 5000)
+        self._vox_pre.setSuffix(" ms")
+        self._vox_post = QSpinBox()
+        self._vox_post.setRange(0, 5000)
+        self._vox_post.setSuffix(" ms")
+
+        self._serial_line = QComboBox()
+        self._serial_line.addItems(["RTS", "DTR"])
+        self._serial_active_low = QCheckBox("Active low")
+        self._serial_baud = QSpinBox()
+        self._serial_baud.setRange(1200, 115200)
+        self._serial_baud.setValue(9600)
+
+        self._cat_rig_model = QSpinBox()
+        self._cat_rig_model.setRange(1, 99999)
+        self._cat_rig_model.setValue(3073)
+        self._cat_baud = QSpinBox()
+        self._cat_baud.setRange(1200, 115200)
+        self._cat_baud.setValue(115200)
+        self._cat_ptt_method = QComboBox()
+        self._cat_ptt_method.addItem("Data PTT", "data")
+        self._cat_ptt_method.addItem("Rig PTT", "rig")
+
+        if isinstance(cfg.radio, VoxManualConfig):
+            self._vox_pre.setValue(cfg.radio.pre_tx_delay_ms)
+            self._vox_post.setValue(cfg.radio.post_tx_delay_ms)
+        elif isinstance(cfg.radio, SerialPttConfig):
+            self._serial_line.setCurrentText(cfg.radio.line)
+            self._serial_active_low.setChecked(cfg.radio.active_low)
+            self._serial_baud.setValue(cfg.radio.baud)
+        elif isinstance(cfg.radio, CatRadioConfig):
+            self._cat_rig_model.setValue(cfg.radio.rig_model)
+            self._cat_baud.setValue(cfg.radio.baud)
+            idx = self._cat_ptt_method.findData(cfg.radio.ptt_method)
+            if idx >= 0:
+                self._cat_ptt_method.setCurrentIndex(idx)
+
+        self._vox_group = QGroupBox("VOX timing")
+        vox_form = QFormLayout(self._vox_group)
+        vox_form.addRow("Pre-TX delay:", self._vox_pre)
+        vox_form.addRow("Post-TX delay:", self._vox_post)
+
+        port_row = QHBoxLayout()
+        port_row.addWidget(self._com_port)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(lambda: self._refresh_ports(self._com_port.currentText()))
+        port_row.addWidget(refresh_btn)
+        self._port_row_widget = QWidget()
+        port_form = QFormLayout(self._port_row_widget)
+        port_form.addRow("COM port:", port_row)
+
+        self._serial_group = QGroupBox("Serial PTT")
+        serial_form = QFormLayout(self._serial_group)
+        serial_form.addRow("PTT line:", self._serial_line)
+        serial_form.addRow(self._serial_active_low)
+        serial_form.addRow("Baud:", self._serial_baud)
+
+        self._cat_group = QGroupBox("Hamlib CAT")
+        cat_form = QFormLayout(self._cat_group)
+        cat_form.addRow("Rig model ID:", self._cat_rig_model)
+        cat_form.addRow("Baud:", self._cat_baud)
+        cat_form.addRow("PTT method:", self._cat_ptt_method)
+
+        form = QFormLayout()
+        form.addRow("Radio profile:", self._radio_profile)
+        profile_widget = QWidget()
+        profile_widget.setLayout(form)
+
+        layout.addWidget(profile_widget)
+        layout.addWidget(self._port_row_widget)
+        layout.addWidget(self._vox_group)
+        layout.addWidget(self._serial_group)
+        layout.addWidget(self._cat_group)
+        layout.addStretch()
+
+        self._radio_profile.currentIndexChanged.connect(self._update_radio_visibility)
+        self._update_radio_visibility()
+        return widget
+
+    def _build_waterfall_tab(self, cfg: AppConfig) -> QWidget:
+        widget = QWidget()
+        form = QFormLayout(widget)
+
+        self._wf_enabled = QCheckBox("Enable waterfall header/footer on file TX")
+        self._wf_enabled.setChecked(cfg.waterfall.enabled)
+        self._wf_monitor = QCheckBox("Show live spectrum during TX (and loopback)")
+        self._wf_monitor.setChecked(cfg.waterfall.tx_monitor)
+        self._wf_begin = QLineEdit(cfg.waterfall.begin_message)
+        self._wf_end = QLineEdit(cfg.waterfall.end_message)
+        self._wf_font = QComboBox()
+        self._wf_font.setEditable(True)
+        self._wf_font.addItems(["DejaVu Sans Mono", "Consolas", "Courier New", "Arial"])
+        font_idx = self._wf_font.findText(cfg.waterfall.default_font)
+        if font_idx >= 0:
+            self._wf_font.setCurrentIndex(font_idx)
+        else:
+            self._wf_font.setCurrentText(cfg.waterfall.default_font)
+        self._wf_font_size = QSpinBox()
+        self._wf_font_size.setRange(8, 48)
+        self._wf_font_size.setValue(cfg.waterfall.default_font_size)
+        self._wf_colormap = QComboBox()
+        self._wf_colormap.addItem("Green", "green")
+        self._wf_colormap.addItem("Heat", "heat")
+        self._wf_colormap.addItem("Grayscale", "grayscale")
+        cmap_idx = self._wf_colormap.findData(cfg.waterfall.colormap)
+        if cmap_idx >= 0:
+            self._wf_colormap.setCurrentIndex(cmap_idx)
+        self._wf_min_db = QDoubleSpinBox()
+        self._wf_min_db.setRange(-120.0, 0.0)
+        self._wf_min_db.setValue(cfg.waterfall.min_db)
+        self._wf_max_db = QDoubleSpinBox()
+        self._wf_max_db.setRange(-60.0, 20.0)
+        self._wf_max_db.setValue(cfg.waterfall.max_db)
+
+        form.addRow(self._wf_enabled)
+        form.addRow(self._wf_monitor)
+        form.addRow("Begin message:", self._wf_begin)
+        form.addRow("End message:", self._wf_end)
+        form.addRow("Font:", self._wf_font)
+        form.addRow("Font size:", self._wf_font_size)
+        form.addRow("Colormap:", self._wf_colormap)
+        form.addRow("Min dB:", self._wf_min_db)
+        form.addRow("Max dB:", self._wf_max_db)
+        return widget
+
+    def _build_appearance_tab(self, cfg: AppConfig) -> QWidget:
+        widget = QWidget()
+        form = QFormLayout(widget)
+        self._theme_light = QRadioButton("Light (default)")
+        self._theme_dark = QRadioButton("Dark")
+        if cfg.ui.theme == "dark":
+            self._theme_dark.setChecked(True)
+        else:
+            self._theme_light.setChecked(True)
+        row = QHBoxLayout()
+        row.addWidget(self._theme_light)
+        row.addWidget(self._theme_dark)
+        form.addRow("Theme:", row)
+        form.addRow(QLabel("Yellow section titles are kept in both themes."))
+        return widget
+
+    def _browse_dir(self, field: QLineEdit) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select directory", field.text())
+        if path:
+            field.setText(path)
+
+    def _populate_devices(self, cfg: AppConfig) -> None:
+        self._input_device.clear()
+        self._output_device.clear()
         self._input_device.addItem("Default", None)
         self._output_device.addItem("Default", None)
         for dev in self._context.audio_engine.list_devices():
@@ -74,8 +290,8 @@ class SettingsDialog(QDialog):
                 self._input_device.addItem(label, dev["index"])
             if dev["max_output_channels"] > 0:
                 self._output_device.addItem(label, dev["index"])
-        self._select_device(self._input_device, cfg.input_device)
-        self._select_device(self._output_device, cfg.output_device)
+        self._select_device(self._input_device, cfg.audio.input_device)
+        self._select_device(self._output_device, cfg.audio.output_device)
 
     def _select_device(self, combo: QComboBox, device_id: int | None) -> None:
         if device_id is None:
@@ -86,25 +302,79 @@ class SettingsDialog(QDialog):
                 combo.setCurrentIndex(i)
                 return
 
+    def _refresh_ports(self, select: str | None = None) -> None:
+        current = select or self._com_port.currentText()
+        self._com_port.clear()
+        for device, desc in list_serial_ports():
+            self._com_port.addItem(f"{device} — {desc}", device)
+        if current:
+            idx = self._com_port.findData(current)
+            if idx >= 0:
+                self._com_port.setCurrentIndex(idx)
+            else:
+                self._com_port.setEditText(current)
+
+    def _update_radio_visibility(self) -> None:
+        profile = self._radio_profile.currentData()
+        self._vox_group.setVisible(profile == "vox")
+        self._serial_group.setVisible(profile == "serial")
+        self._cat_group.setVisible(profile == "cat")
+        self._port_row_widget.setVisible(profile in ("serial", "cat"))
+
     def apply(self) -> AppConfig:
         config = self._context.config
         config.callsign = self._callsign.text().strip() or "N0CALL"
         config.transfer.loopback_mode = self._loopback.isChecked()
+        config.network.gallery_dir = self._gallery_dir.text().strip() or None
+        config.network.received_dir = self._received_dir.text().strip() or None
+
         config.audio.input_device = self._input_device.currentData()
         config.audio.output_device = self._output_device.currentData()
+        config.audio.sample_rate = self._sample_rate.value()
+        config.audio.block_size = self._block_size.value()
 
+        port = self._com_port.currentData() or self._com_port.currentText().strip()
         profile = self._radio_profile.currentData()
         if profile == "serial":
-            config.radio = SerialPttConfig(port=self._serial_port.text())
+            config.radio = SerialPttConfig(
+                port=port,
+                line=self._serial_line.currentText(),
+                active_low=self._serial_active_low.isChecked(),
+                baud=self._serial_baud.value(),
+            )
         elif profile == "cat":
-            if isinstance(config.radio, CatRadioConfig):
-                config.radio.port = self._serial_port.text()
-            else:
-                config.radio = CatRadioConfig(port=self._serial_port.text())
-        elif profile == "vox":
-            pre = getattr(config.radio, "pre_tx_delay_ms", 300)
-            post = getattr(config.radio, "post_tx_delay_ms", 200)
-            config.radio = VoxManualConfig(pre_tx_delay_ms=pre, post_tx_delay_ms=post)
+            config.radio = CatRadioConfig(
+                rig_model=self._cat_rig_model.value(),
+                port=port,
+                baud=self._cat_baud.value(),
+                ptt_method=self._cat_ptt_method.currentData(),
+            )
+        else:
+            config.radio = VoxManualConfig(
+                pre_tx_delay_ms=self._vox_pre.value(),
+                post_tx_delay_ms=self._vox_post.value(),
+            )
+
+        config.waterfall.enabled = self._wf_enabled.isChecked()
+        config.waterfall.tx_monitor = self._wf_monitor.isChecked()
+        config.waterfall.begin_message = self._wf_begin.text()
+        config.waterfall.end_message = self._wf_end.text()
+        config.waterfall.default_font = self._wf_font.currentText()
+        config.waterfall.default_font_size = self._wf_font_size.value()
+        config.waterfall.colormap = self._wf_colormap.currentData()
+        config.waterfall.min_db = self._wf_min_db.value()
+        config.waterfall.max_db = self._wf_max_db.value()
+        config.ui.theme = "dark" if self._theme_dark.isChecked() else "light"
 
         save_config(config)
         return config
+
+    def waterfall_config(self) -> dict[str, object]:
+        """Values for syncing the main-window WFTxt editor after apply."""
+        return {
+            "enabled": self._wf_enabled.isChecked(),
+            "begin_message": self._wf_begin.text(),
+            "end_message": self._wf_end.text(),
+            "default_font": self._wf_font.currentText(),
+            "default_font_size": self._wf_font_size.value(),
+        }

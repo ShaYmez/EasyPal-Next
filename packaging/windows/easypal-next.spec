@@ -18,10 +18,21 @@ for _dll_name in (
 
 _brand_ico = project_root / "resources" / "brand" / "easypal-next.ico"
 
+_styles_dir = project_root / "src" / "easypal_next" / "ui" / "styles"
 _datas = [
     (str(project_root / "config" / "defaults.yaml"), "config"),
     (str(project_root / "src" / "easypal_next" / "network" / "static"), "easypal_next/network/static"),
 ]
+if _styles_dir.is_dir():
+    _datas.append((str(_styles_dir), "ui/styles"))
+try:
+    import PySide6
+
+    _imgfmt = Path(PySide6.__file__).resolve().parent / "plugins" / "imageformats"
+    if _imgfmt.is_dir():
+        _datas.append((str(_imgfmt), "PySide6/plugins/imageformats"))
+except ImportError:
+    pass
 _brand_dir = project_root / "resources" / "brand"
 if _brand_dir.is_dir():
     _datas.append((str(_brand_dir), "resources/brand"))

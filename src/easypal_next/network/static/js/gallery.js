@@ -19,8 +19,14 @@ function renderGallery(items) {
     const card = document.createElement("button");
     card.className = "gallery-item";
     card.type = "button";
+    const direction = (item.direction || "rx").toUpperCase();
+    const badgeClass = direction === "TX" ? "badge-tx" : "badge-rx";
     card.innerHTML = `
-      <img src="${item.thumb_url}" alt="${item.callsign}">
+      <div class="thumb-wrap">
+        <span class="direction-badge ${badgeClass}">${direction}</span>
+        <img src="${item.thumb_url}" alt="${item.callsign}"
+             onerror="this.onerror=null;this.src='${item.image_url}'">
+      </div>
       <div class="meta">${item.callsign}<br>${new Date(item.created_at).toLocaleString()}</div>
     `;
     card.addEventListener("click", () => openViewer(item.image_url));

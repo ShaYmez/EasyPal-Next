@@ -34,7 +34,12 @@ class AppContext:
             if config.network.gallery_dir
             else user_gallery_dir()
         )
-        self.gallery = GalleryStore(gallery_dir)
+        received = (
+            Path(config.network.received_dir).expanduser()
+            if config.network.received_dir
+            else None
+        )
+        self.gallery = GalleryStore(gallery_dir, received_dir=received)
         self.modem_bridge: ModemBridge | None = None
         if not config.transfer.loopback_mode:
             self.modem_bridge = ModemBridge(

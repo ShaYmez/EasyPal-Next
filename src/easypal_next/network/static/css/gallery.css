@@ -76,11 +76,44 @@ body {
   touch-action: manipulation;
 }
 
+.gallery-item .thumb-wrap {
+  position: relative;
+}
+
 .gallery-item img {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
   display: block;
+}
+
+.direction-badge {
+  position: absolute;
+  top: 0.35rem;
+  left: 0.35rem;
+  z-index: 1;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+}
+
+.badge-rx {
+  background: #1e4d8c;
+  color: #fff;
+}
+
+.badge-tx {
+  background: #f5c518;
+  color: #0f1419;
+}
+
+.empty {
+  grid-column: 1 / -1;
+  color: #9fb0c3;
+  padding: 2rem;
+  text-align: center;
 }
 
 .gallery-item .meta {

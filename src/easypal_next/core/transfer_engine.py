@@ -13,6 +13,7 @@ import numpy as np
 
 from easypal_next.audio.modem_bridge import ModemBridge
 from easypal_next.audio.resampler import downsample_to_modem
+from easypal_next.audio.waterfall_tap import WaterfallTap
 from easypal_next.config.schema import AppConfig
 from easypal_next.core.events import (
     EventBus,
@@ -20,6 +21,7 @@ from easypal_next.core.events import (
     LogEvent,
     RxImageReadyEvent,
     SessionStateChangedEvent,
+    SpectrumEvent,
     TransferProgressEvent,
     WaterfallPaintStartedEvent,
 )
@@ -73,6 +75,8 @@ class TransferEngine:
         self._rx_framer = ModemFramer(126)
         self._rx_listening = False
         self._bridge_tx_only = False
+        self._spectrum_tap: WaterfallTap | None = None
+        self._tx_file_path: Path | None = None
 
     @property
     def state(self) -> SessionState:
@@ -116,6 +120,26 @@ class TransferEngine:
         if self._bridge.is_running:
             self._bridge.stop()
         self._bridge_tx_only = False
+
+    def _spectrum_callback(self, bins: list[float]) -> None:
+        self._event_bus.publish(SpectrumEvent(bins=bins))
+
+    def _ensure_spectrum_tap(self) -> WaterfallTap:
+        if self._spectrum_tap is None:
+            self._spectrum_tap = WaterfallTap(on_spectrum=self._spectrum_callback)
+        return self._spectrum_tap
+
+    def _feed_spectrum(self, audio: np.ndarray) -> None:
+        if len(audio) == 0:
+            return
+        monitor = self._config.waterfall.tx_monitor or self._config.transfer.loopback_mode
+        if not monitor:
+            return
+        self._ensure_spectrum_tap().feed(audio)
+
+    def _add_tx_gallery_entry(self, file_path: Path) -> None:
+        entry = self._gallery.add_image(file_path, callsign=self._config.callsign, direction="tx")
+        self._event_bus.publish(GalleryUpdatedEvent(image_id=entry.id, path=str(file_path)))
 
     def _set_state(self, state: SessionState) -> None:
         self._state = state
@@ -198,6 +222,7 @@ class TransferEngine:
         )
 
     def _play_or_buffer(self, audio: np.ndarray, loopback_buffer: list[np.ndarray]) -> None:
+        self._feed_spectrum(audio)
         if self._config.transfer.loopback_mode:
             loopback_buffer.append(audio)
         elif self._bridge:
@@ -287,6 +312,7 @@ class TransferEngine:
                     self._rx_output_dir = self._gallery.received_dir()
                 self._set_state(SessionState.RX_ASSEMBLING)
                 self._rx_modem.decode_samples(combined)
+                self._feed_spectrum(combined)
                 self._finalize_rx()
             elif self._bridge:
                 self._bridge.drain_tx()
@@ -296,11 +322,58 @@ class TransferEngine:
             if not self._config.transfer.loopback_mode:
                 self._radio.ptt_off()
 
+            if self._tx_file_path is not None and not self._abort.is_set():
+                self._add_tx_gallery_entry(self._tx_file_path)
+
             self._set_state(SessionState.TX_DONE)
             self._event_bus.publish(LogEvent(level="info", message="TX complete"))
             self._set_state(SessionState.IDLE)
         except Exception as exc:
             self._event_bus.publish(LogEvent(level="error", message=f"TX failed: {exc}"))
+            self._set_state(SessionState.ERROR)
+            self._set_state(SessionState.IDLE)
+        finally:
+            self._abort.clear()
+            self._tx_file_path = None
+            if bridge_started_here:
+                self._maybe_stop_bridge()
+
+    def _run_waterfall_tx(self, message: str) -> None:
+        bridge_started_here = False
+        try:
+            if not self._config.waterfall.enabled:
+                raise RuntimeError("Waterfall TX is disabled in settings")
+            if not self._config.transfer.loopback_mode:
+                self._ensure_bridge_running(tx_only=True)
+                bridge_started_here = self._bridge_tx_only and self._bridge is not None
+                self._radio.ptt_on()
+
+            loopback_buffer: list[np.ndarray] = []
+            self._set_state(SessionState.TX_WATERFALL_HEADER)
+            self._event_bus.publish(WaterfallPaintStartedEvent(message=message))
+            header = self._waterfall.text_to_audio(
+                message,
+                font=self._config.waterfall.default_font,
+                font_size=self._config.waterfall.default_font_size,
+            )
+            self._play_or_buffer(self._waterfall_to_modem(header), loopback_buffer)
+
+            if self._config.transfer.loopback_mode and loopback_buffer:
+                combined = np.concatenate(loopback_buffer)
+                self._feed_spectrum(combined)
+            elif self._bridge:
+                self._bridge.drain_tx()
+                post_delay = getattr(self._config.radio, "post_tx_delay_ms", 200)
+                time.sleep(post_delay / 1000.0)
+
+            if not self._config.transfer.loopback_mode:
+                self._radio.ptt_off()
+
+            self._set_state(SessionState.TX_DONE)
+            self._event_bus.publish(LogEvent(level="info", message="Waterfall text TX complete"))
+            self._set_state(SessionState.IDLE)
+        except Exception as exc:
+            self._event_bus.publish(LogEvent(level="error", message=f"Waterfall TX failed: {exc}"))
             self._set_state(SessionState.ERROR)
             self._set_state(SessionState.IDLE)
         finally:
@@ -314,9 +387,21 @@ class TransferEngine:
         self.initialize()
         self._abort.clear()
         self._seq = 0
+        self._tx_file_path = file_path
         self._event_bus.publish(LogEvent(level="info", message=f"TX armed: {file_path}"))
         self._set_state(SessionState.TX_ARMED)
         self._worker = threading.Thread(target=self._run_tx, args=(file_path,), daemon=True)
+        self._worker.start()
+
+    def start_waterfall_tx(self, message: str) -> None:
+        if self._state != SessionState.IDLE:
+            raise RuntimeError(f"Cannot start waterfall TX from state {self._state}")
+        self.initialize()
+        self._abort.clear()
+        self._tx_file_path = None
+        self._event_bus.publish(LogEvent(level="info", message="Waterfall text TX armed"))
+        self._set_state(SessionState.TX_ARMED)
+        self._worker = threading.Thread(target=self._run_waterfall_tx, args=(message,), daemon=True)
         self._worker.start()
 
     def start_rx(self, output_dir: Path) -> None:

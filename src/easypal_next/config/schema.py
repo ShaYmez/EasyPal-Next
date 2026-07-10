@@ -72,6 +72,13 @@ class WaterfallConfig(BaseModel):
     begin_wav: str | None = None
     end_wav: str | None = None
     tx_monitor: bool = True
+    colormap: Literal["green", "heat", "grayscale"] = "green"
+    min_db: float = -80.0
+    max_db: float = 0.0
+
+
+class UiConfig(BaseModel):
+    theme: Literal["light", "dark"] = "light"
 
 
 class NetworkConfig(BaseModel):
@@ -80,6 +87,7 @@ class NetworkConfig(BaseModel):
     port: int = 8765
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     gallery_dir: str | None = None
+    received_dir: str | None = None
 
 
 class CommunityServerConfig(BaseModel):
@@ -109,3 +117,4 @@ class AppConfig(BaseModel):
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     community: CommunityServerConfig = Field(default_factory=CommunityServerConfig)
     transfer: TransferConfig = Field(default_factory=TransferConfig)
+    ui: UiConfig = Field(default_factory=UiConfig)

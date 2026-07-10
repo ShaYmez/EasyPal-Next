@@ -1,0 +1,134 @@
+/* EasyPal-Next dark theme */
+
+QMainWindow, QDialog, QWidget {
+    background-color: #0f1419;
+    color: #e7ecf3;
+}
+
+QLabel {
+    color: #e7ecf3;
+}
+
+QGroupBox {
+    border: 1px solid #1e4d8c;
+    border-radius: 4px;
+    margin-top: 8px;
+    padding-top: 6px;
+    font-weight: bold;
+    color: #1e4d8c;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+    color: #f5c518;
+}
+
+QMenuBar {
+    background: #1a3a5c;
+    color: #e7ecf3;
+}
+
+QMenuBar::item:selected {
+    background: #1e4d8c;
+}
+
+QToolBar {
+    background: #1a3a5c;
+    spacing: 4px;
+    border: none;
+    padding: 2px 4px;
+}
+
+QToolBar QToolButton {
+    color: #e7ecf3;
+    padding: 4px 10px;
+    border-radius: 3px;
+}
+
+QToolBar QToolButton:hover {
+    background: #1e4d8c;
+}
+
+QPushButton {
+    background: #1e4d8c;
+    color: #ffffff;
+    border: none;
+    border-radius: 3px;
+    padding: 4px 12px;
+}
+
+QPushButton:hover {
+    background: #2563a8;
+}
+
+QPushButton#primaryButton {
+    font-weight: bold;
+}
+
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit {
+    background: #1a1f28;
+    color: #e7ecf3;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 2px 4px;
+}
+
+QTabWidget::pane {
+    border: 1px solid #1e4d8c;
+}
+
+QTabBar::tab {
+    background: #1a3a5c;
+    color: #e7ecf3;
+    padding: 6px 14px;
+}
+
+QTabBar::tab:selected {
+    background: #1e4d8c;
+    color: #f5c518;
+}
+
+QProgressBar {
+    border: 1px solid #333;
+    border-radius: 3px;
+    text-align: center;
+    background: #1a1f28;
+    max-height: 18px;
+}
+
+QProgressBar::chunk {
+    background-color: #f5c518;
+}
+
+QStatusBar {
+    background: #1a3a5c;
+    color: #e7ecf3;
+}
+
+QStatusBar QLabel#galleryLink {
+    color: #f5c518;
+}
+
+QListWidget {
+    background: #1a1f28;
+    border: 1px solid #333;
+}
+
+QPlainTextEdit#logView, QTextEdit#logView {
+    background: #111418;
+    color: #c8c8c8;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+}
+
+QLabel#waterfallDisplay {
+    background: #0a0a12;
+    border: 1px solid #333;
+    color: #888888;
+}
+
+QSplitter::handle {
+    background: #1e4d8c;
+}
