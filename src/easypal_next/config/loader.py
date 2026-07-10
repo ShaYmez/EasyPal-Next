@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from easypal_next.app.paths import app_root, bundled_defaults_path, user_config_path
+from easypal_next.app.paths import app_root, bundled_defaults_path, package_root, user_config_path
 from easypal_next.config.schema import AppConfig
 
 
@@ -23,6 +23,7 @@ def _resolve_defaults_path(explicit: Path | None) -> Path:
         return explicit
     candidates = [
         bundled_defaults_path(),
+        package_root() / "config" / "defaults.yaml",
         app_root() / "config" / "defaults.yaml",
         Path(__file__).resolve().parents[3] / "config" / "defaults.yaml",
     ]

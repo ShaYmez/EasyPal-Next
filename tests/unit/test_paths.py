@@ -26,6 +26,22 @@ def test_resolve_libcodec2_frozen_meipass(tmp_path: Path, monkeypatch):
     assert resolve_libcodec2(None) == dll
 
 
+def test_resolve_libcodec2_frozen_internal_layout(tmp_path: Path, monkeypatch):
+    import sys
+
+    install = tmp_path / "install"
+    internal = install / "_internal"
+    internal.mkdir(parents=True)
+    dll = internal / "libcodec2.dll"
+    dll.write_bytes(b"fake")
+    exe = install / "EasyPal-Next.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe), raising=False)
+    assert resolve_libcodec2(None) == dll
+
+
 def test_brand_icon_path_exists():
     from easypal_next.app.paths import brand_icon_path
 

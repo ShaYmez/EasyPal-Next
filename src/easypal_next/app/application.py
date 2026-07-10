@@ -8,12 +8,13 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from easypal_next.app.bootstrap import build_context
-from easypal_next.app.paths import brand_icon_path
+from easypal_next.app.paths import brand_icon_path, init_native_library_dirs
 from easypal_next.ui.main_window import MainWindow
 
 
 def run_application(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv
+    init_native_library_dirs()
     app = QApplication(args)
     app.setApplicationName("EasyPal-Next")
     app.setOrganizationName("EasyPal-Next")
