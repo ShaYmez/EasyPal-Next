@@ -40,6 +40,15 @@ class GalleryStore:
             encoding="utf-8",
         )
 
+    @property
+    def gallery_dir(self) -> Path:
+        return self._dir
+
+    def received_dir(self) -> Path:
+        path = self._dir.parent / "received"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def add_image(
         self,
         image_path: Path,
@@ -49,9 +58,13 @@ class GalleryStore:
     ) -> GalleryEntry:
         image_id = uuid.uuid4().hex[:12]
         thumb_path = self._dir / f"{image_id}_thumb.jpg"
-        with Image.open(image_path) as image:
-            image.thumbnail((320, 320))
-            image.save(thumb_path, "JPEG", quality=85)
+        try:
+            with Image.open(image_path) as image:
+                image.thumbnail((320, 320))
+                image.save(thumb_path, "JPEG", quality=85)
+        except Exception:
+            placeholder = Image.new("RGB", (320, 240), color=(30, 77, 140))
+            placeholder.save(thumb_path, "JPEG", quality=85)
         entry = GalleryEntry(
             id=image_id,
             path=str(image_path),

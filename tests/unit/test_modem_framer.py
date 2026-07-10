@@ -24,6 +24,16 @@ def test_framer_roundtrip_large_packet():
     assert result == packet
 
 
+def test_framer_ignores_modem_frame_padding():
+    """RX modem frames are zero-padded to max_payload; feed must trim."""
+    framer = ModemFramer(max_payload=126)
+    packet = b"EPNX" + b"\x01" * 50
+    fragment = framer.fragment(packet)[0]
+    padded = fragment + b"\x00" * (126 - len(fragment))
+    rx = ModemFramer(126)
+    assert rx.feed(padded) == packet
+
+
 def test_framer_file_meta_size():
     """FILE_META with long filename must fit via fragmentation."""
     framer = ModemFramer(max_payload=126)

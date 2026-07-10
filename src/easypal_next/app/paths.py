@@ -50,6 +50,14 @@ def bundled_defaults_path() -> Path:
 
 
 def bundled_libcodec2_path() -> Path:
+    """libcodec2 next to the executable or in PyInstaller _internal/."""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass) / "libcodec2.dll"
+        internal = app_root() / "_internal" / "libcodec2.dll"
+        if internal.is_file():
+            return internal
     return app_root() / "libcodec2.dll"
 
 

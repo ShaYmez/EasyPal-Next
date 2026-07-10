@@ -74,4 +74,11 @@ class FreeDvLibrary:
 
 
 def load_library(path: str) -> FreeDvLibrary:
-    return FreeDvLibrary(CDLL(path))
+    import os
+    from pathlib import Path
+
+    dll_path = Path(path).resolve()
+    dll_dir = str(dll_path.parent)
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(dll_dir)
+    return FreeDvLibrary(CDLL(str(dll_path)))

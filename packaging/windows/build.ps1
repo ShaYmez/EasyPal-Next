@@ -12,7 +12,23 @@ try {
     pyinstaller --noconfirm "packaging/windows/easypal-next.spec" --distpath "packaging/windows/dist" --workpath "packaging/windows/build"
 
     if (Get-Command iscc -ErrorAction SilentlyContinue) {
-        iscc "packaging/windows/easypal-next.iss"
+        $Iscc = "iscc"
+    } else {
+        $IsccCandidates = @(
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+        )
+        $Iscc = $IsccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+
+    if ($Iscc) {
+        Push-Location "packaging/windows"
+        try {
+            & $Iscc "easypal-next.iss"
+        } finally {
+            Pop-Location
+        }
         Write-Host "Installer written to packaging/windows/output/"
     } else {
         Write-Warning "Inno Setup (iscc) not found. PyInstaller bundle is at packaging/windows/dist/EasyPal-Next/"

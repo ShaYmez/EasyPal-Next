@@ -16,7 +16,7 @@ OutputBaseFilename=EasyPal-Next-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=admin
-SetupIcon=..\..\resources\brand\easypal-next.ico
+SetupIconFile=..\..\resources\brand\easypal-next.ico
 UninstallDisplayIcon={app}\EasyPal-Next.exe
 
 [Languages]

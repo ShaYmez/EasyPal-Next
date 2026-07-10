@@ -16,6 +16,16 @@ def test_resolve_libcodec2_explicit_path(tmp_path: Path):
     assert resolve_libcodec2(str(dll)) == dll
 
 
+def test_resolve_libcodec2_frozen_meipass(tmp_path: Path, monkeypatch):
+    import sys
+
+    dll = tmp_path / "libcodec2.dll"
+    dll.write_bytes(b"fake")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert resolve_libcodec2(None) == dll
+
+
 def test_brand_icon_path_exists():
     from easypal_next.app.paths import brand_icon_path
 

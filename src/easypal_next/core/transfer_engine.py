@@ -275,11 +275,16 @@ class TransferEngine:
                 self._play_or_buffer(self._waterfall_to_modem(footer), loopback_buffer)
 
             if self._config.transfer.loopback_mode:
-                silence = np.zeros(int(self._tx_modem.modem_sample_rate * 0.1), dtype=np.int16)
-                loopback_buffer.append(silence)
+                rate = self._tx_modem.modem_sample_rate
+                lead_silence = np.zeros(rate, dtype=np.int16)
+                tail_silence = np.zeros(int(rate * 0.5), dtype=np.int16)
+                loopback_buffer.insert(0, lead_silence)
+                loopback_buffer.append(tail_silence)
                 combined = np.concatenate(loopback_buffer)
                 self._assembler = FileAssembler()
                 self._rx_framer.reset()
+                if self._rx_output_dir == Path("."):
+                    self._rx_output_dir = self._gallery.received_dir()
                 self._set_state(SessionState.RX_ASSEMBLING)
                 self._rx_modem.decode_samples(combined)
                 self._finalize_rx()

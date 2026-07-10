@@ -4,11 +4,19 @@ from pathlib import Path
 
 project_root = Path(SPECPATH).resolve().parents[1]
 
-_redist_dll = project_root / "packaging" / "windows" / "redist" / "libcodec2.dll"
-_brand_ico = project_root / "resources" / "brand" / "easypal-next.ico"
+_redist_dir = project_root / "packaging" / "windows" / "redist"
 _binaries = []
-if _redist_dll.is_file():
-    _binaries.append((str(_redist_dll), "."))
+for _dll_name in (
+    "libcodec2.dll",
+    "libgcc_s_seh-1.dll",
+    "libstdc++-6.dll",
+    "libwinpthread-1.dll",
+):
+    _dll = _redist_dir / _dll_name
+    if _dll.is_file():
+        _binaries.append((str(_dll), "."))
+
+_brand_ico = project_root / "resources" / "brand" / "easypal-next.ico"
 
 _datas = [
     (str(project_root / "config" / "defaults.yaml"), "config"),

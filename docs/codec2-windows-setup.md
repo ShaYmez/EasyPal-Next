@@ -39,14 +39,33 @@ modem:
   libcodec2_path: "C:/Users/YOU/EasyPal-Next/packaging/windows/redist/libcodec2.dll"
 ```
 
-## Option B — Pre-built DLL (if available)
+## Option B — Fetch MSYS2 UCRT64 packages (recommended for dev)
 
-Place `libcodec2.dll` in `packaging/windows/redist/` or next to `EasyPal-Next.exe` after install.
+From the project root with `.venv` activated:
+
+```bat
+python scripts\fetch-libcodec2.py
+python scripts\verify-codec2.py
+```
+
+This downloads pinned MSYS2 UCRT64 packages and copies these DLLs into `packaging/windows/redist/`:
+
+- `libcodec2.dll`
+- `libgcc_s_seh-1.dll`
+- `libstdc++-6.dll`
+- `libwinpthread-1.dll`
+
+The MinGW runtime DLLs must sit next to `libcodec2.dll` on stock Windows (PyInstaller bundles all four).
+
+## Option C — Pre-built DLL (if available)
+
+Place `libcodec2.dll` and its MinGW dependencies in `packaging/windows/redist/` or next to `EasyPal-Next.exe` after install.
 
 ## Dependencies
 
-`libcodec2.dll` may require MSVC runtime (`vcruntime140.dll`) — install
-[Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) if load fails.
+MSYS2 builds typically need the MinGW runtime DLLs listed above, not only MSVC runtime.
+
+If load still fails, install [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 
 ## References
 
