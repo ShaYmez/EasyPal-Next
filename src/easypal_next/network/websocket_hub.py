@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
 from dataclasses import asdict, is_dataclass
 
 from fastapi import WebSocket
@@ -15,8 +16,8 @@ class WebSocketHub:
     def __init__(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
         self._clients: set[WebSocket] = set()
-        self._queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=256)
-        event_bus.bind_async_queue(self._queue)
+        self._queue: queue.Queue[Event] = queue.Queue(maxsize=256)
+        event_bus.bind_thread_queue(self._queue)
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -29,7 +30,7 @@ class WebSocketHub:
 
     async def broadcast_loop(self) -> None:
         while True:
-            event = await self._queue.get()
+            event = await asyncio.to_thread(self._queue.get)
             message = json.dumps(_event_to_dict(event))
             dead: list[WebSocket] = []
             for client in self._clients:

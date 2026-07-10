@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from easypal_next.network.gallery_store import GalleryEntry, GalleryStore
 
@@ -19,7 +19,8 @@ class RxPane(QWidget):
         self._gallery = gallery
         self._preview = QLabel("No image received")
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setMinimumHeight(240)
+        self._preview.setMinimumHeight(120)
+        self._preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._preview.setStyleSheet("border: 1px solid #444; background: #1a1a1a; color: #ccc;")
 
         self._grid_widget = QWidget()
@@ -29,7 +30,7 @@ class RxPane(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(self._grid_widget)
-        scroll.setMaximumHeight(160)
+        scroll.setMinimumHeight(80)
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Received images"))

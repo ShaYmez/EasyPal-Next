@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
+import queue
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from easypal_next.core.session import SessionState
@@ -69,7 +69,7 @@ Event = (
 class EventBus:
     def __init__(self) -> None:
         self._subscribers: dict[type, list[Callable[[Any], None]]] = defaultdict(list)
-        self._async_queue: asyncio.Queue[Event] | None = None
+        self._thread_queue: queue.Queue[Event] | None = None
 
     def subscribe(self, event_type: type, handler: Callable[[Any], None]) -> None:
         self._subscribers[event_type].append(handler)
@@ -77,11 +77,11 @@ class EventBus:
     def publish(self, event: Event) -> None:
         for handler in self._subscribers[type(event)]:
             handler(event)
-        if self._async_queue is not None:
+        if self._thread_queue is not None:
             try:
-                self._async_queue.put_nowait(event)
-            except asyncio.QueueFull:
+                self._thread_queue.put_nowait(event)
+            except queue.Full:
                 pass
 
-    def bind_async_queue(self, queue: asyncio.Queue[Event]) -> None:
-        self._async_queue = queue
+    def bind_thread_queue(self, event_queue: queue.Queue[Event]) -> None:
+        self._thread_queue = event_queue

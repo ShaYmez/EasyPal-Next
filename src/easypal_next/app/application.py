@@ -31,4 +31,6 @@ def run_application(argv: list[str] | None = None) -> int:
     if icon_path.is_file():
         window.setWindowIcon(QIcon(str(icon_path)))
     window.show()
+    window.raise_()
+    window.activateWindow()
     return app.exec()

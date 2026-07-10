@@ -7,12 +7,15 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QStatusBar,
     QToolBar,
@@ -21,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from easypal_next.app.bootstrap import AppContext
-from easypal_next.app.paths import brand_icon_path, brand_logo_path, user_gallery_dir
+from easypal_next.app.paths import brand_icon_path, brand_logo_path
 from easypal_next.core.events import GalleryUpdatedEvent, LogEvent, SessionStateChangedEvent
 from easypal_next.core.session import SessionState
 from easypal_next.network.util import gallery_urls
@@ -40,7 +43,8 @@ class MainWindow(QMainWindow):
         self._selected_file: Path | None = None
         self._vm = TransferViewModel(context.event_bus)
         self.setWindowTitle("EasyPal-Next")
-        self.resize(1200, 800)
+        self.setMinimumSize(880, 560)
+        self._fit_to_available_screen()
         self.setStyleSheet(
             "QMainWindow { background-color: #0f1419; }"
             "QLabel { color: #e7ecf3; }"
@@ -49,6 +53,11 @@ class MainWindow(QMainWindow):
         )
 
         central = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         layout = QVBoxLayout(central)
 
         brand_row = QHBoxLayout()
@@ -58,7 +67,7 @@ class MainWindow(QMainWindow):
             logo_label = QLabel()
             logo_label.setPixmap(
                 QPixmap(str(logo_path)).scaledToHeight(
-                    72, Qt.TransformationMode.SmoothTransformation
+                    48, Qt.TransformationMode.SmoothTransformation
                 )
             )
             logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -106,21 +115,27 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._file_label)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
         self._rx_pane = RxPane(context.gallery)
         self._waterfall = WaterfallWidget(context.event_bus)
         splitter.addWidget(self._rx_pane)
         splitter.addWidget(self._waterfall)
-        splitter.setSizes([500, 500])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([1, 1])
         layout.addWidget(splitter, stretch=1)
 
         bottom = QHBoxLayout()
         self._wftxt = WaterfallTextEditor(context.config.waterfall)
+        self._wftxt.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         bottom.addWidget(self._wftxt, stretch=1)
         self._log_panel = LogPanel(context.event_bus)
+        self._log_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         bottom.addWidget(self._log_panel, stretch=2)
         layout.addLayout(bottom)
 
-        self.setCentralWidget(central)
+        scroll.setWidget(central)
+        self.setCentralWidget(scroll)
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Ready")
 
@@ -137,6 +152,19 @@ class MainWindow(QMainWindow):
         context.event_bus.subscribe(GalleryUpdatedEvent, self._on_gallery_updated)
         self._vm.progress_changed.connect(self._on_progress)
         self._vm.state_changed.connect(lambda s: self._status_label.setText(f"Session: {s}"))
+
+    def _fit_to_available_screen(self) -> None:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1024, 700)
+            return
+        available = screen.availableGeometry()
+        width = min(1100, max(880, int(available.width() * 0.92)))
+        height = min(820, max(560, int(available.height() * 0.88)))
+        self.resize(width, height)
+        frame = self.frameGeometry()
+        frame.moveCenter(available.center())
+        self.move(frame.topLeft())
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._context, self)
@@ -180,7 +208,7 @@ class MainWindow(QMainWindow):
         if self._context.transfer_engine.state != SessionState.IDLE:
             QMessageBox.warning(self, "Receive", "Transfer already in progress.")
             return
-        out_dir = user_gallery_dir()
+        out_dir = self._context.gallery.received_dir()
         try:
             self._context.transfer_engine.start_rx(out_dir)
         except Exception as exc:

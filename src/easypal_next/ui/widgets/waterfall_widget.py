@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from easypal_next.core.events import EventBus, SpectrumEvent
 
@@ -28,7 +28,8 @@ class WaterfallWidget(QWidget):
         self._history: list[list[float]] = []
         self._max_rows = 120
         self._label = QLabel()
-        self._label.setMinimumSize(400, 200)
+        self._label.setMinimumSize(160, 100)
+        self._label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._label.setStyleSheet("background: #0a0a12; border: 1px solid #333;")
         self._label.setText("Waterfall — start Receive for live spectrum")
@@ -50,6 +51,8 @@ class WaterfallWidget(QWidget):
     def _redraw(self) -> None:
         if not self._history:
             return
+        label_w = max(1, self._label.width())
+        label_h = max(1, self._label.height())
         rows = len(self._history)
         cols = len(self._history[0])
         image = QImage(cols, rows, QImage.Format.Format_RGB32)
@@ -59,8 +62,8 @@ class WaterfallWidget(QWidget):
                 green = int(level * 255)
                 image.setPixelColor(col, row, QColor(0, green, int(level * 128)))
         pix = QPixmap.fromImage(image).scaled(
-            self._label.width(),
-            self._label.height(),
+            label_w,
+            label_h,
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.FastTransformation,
         )
