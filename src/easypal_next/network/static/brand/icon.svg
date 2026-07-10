@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="EasyPal-Next">
+  <defs>
+    <style>
+      .blue { fill: #1e4d8c; }
+      .yellow { fill: #f5c518; stroke: none; }
+      .white { fill: #ffffff; stroke: none; }
+    </style>
+  </defs>
+  <rect width="512" height="512" rx="96" class="blue"/>
+  <path class="yellow" d="M96 300c48-72 128-112 160-112s112 40 160 112" fill="none" stroke="#f5c518" stroke-width="28" stroke-linecap="round"/>
+  <path class="yellow" d="M136 340c36-48 96-76 120-76s84 28 120 76" fill="none" stroke="#f5c518" stroke-width="22" stroke-linecap="round"/>
+  <path class="yellow" d="M176 378c24-28 64-44 80-44s56 16 80 44" fill="none" stroke="#f5c518" stroke-width="18" stroke-linecap="round"/>
+  <rect x="232" y="88" width="48" height="72" rx="12" class="white"/>
+  <circle cx="256" cy="72" r="18" class="white"/>
+  <circle cx="220" cy="228" r="14" class="white"/>
+  <circle cx="292" cy="228" r="14" class="white"/>
+  <path class="white" d="M230 268c16 18 36 18 52 0" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round"/>
+</svg>

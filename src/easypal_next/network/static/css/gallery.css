@@ -3,6 +3,10 @@
   font-family: system-ui, -apple-system, Segoe UI, sans-serif;
   background: #0f1419;
   color: #e7ecf3;
+  --brand-blue: #1e4d8c;
+  --brand-deep: #1a3a5c;
+  --brand-yellow: #f5c518;
+  --brand-white: #ffffff;
 }
 
 body {
@@ -12,20 +16,47 @@ body {
 
 .header {
   padding: 1rem 1.25rem;
-  background: #16202a;
-  border-bottom: 1px solid #2a3644;
+  background: linear-gradient(135deg, var(--brand-deep) 0%, #0f1419 100%);
+  border-bottom: 2px solid var(--brand-blue);
   position: sticky;
   top: 0;
   z-index: 10;
 }
 
-.header h1 {
-  margin: 0;
-  font-size: 1.25rem;
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
-.header p {
-  margin: 0.25rem 0 0;
+.brand-icon {
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.brand-easy {
+  color: var(--brand-white);
+}
+
+.brand-next {
+  color: var(--brand-yellow);
+}
+
+.brand-tagline {
+  margin: 0.15rem 0 0;
+  color: #9fb0c3;
+  font-size: 0.8rem;
+}
+
+.header p#status {
+  margin: 0.75rem 0 0;
   color: #9fb0c3;
   font-size: 0.9rem;
 }
@@ -75,7 +106,7 @@ body {
 #bar-fill {
   height: 100%;
   width: 0;
-  background: #3ecf8e;
+  background: var(--brand-yellow);
   transition: width 0.2s ease;
 }
 

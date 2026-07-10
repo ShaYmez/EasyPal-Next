@@ -5,18 +5,24 @@ from pathlib import Path
 project_root = Path(SPECPATH).resolve().parents[1]
 
 _redist_dll = project_root / "packaging" / "windows" / "redist" / "libcodec2.dll"
+_brand_ico = project_root / "resources" / "brand" / "easypal-next.ico"
 _binaries = []
 if _redist_dll.is_file():
     _binaries.append((str(_redist_dll), "."))
+
+_datas = [
+    (str(project_root / "config" / "defaults.yaml"), "config"),
+    (str(project_root / "src" / "easypal_next" / "network" / "static"), "easypal_next/network/static"),
+]
+_brand_dir = project_root / "resources" / "brand"
+if _brand_dir.is_dir():
+    _datas.append((str(_brand_dir), "resources/brand"))
 
 a = Analysis(
     [str(project_root / "src" / "easypal_next" / "__main__.py")],
     pathex=[str(project_root / "src")],
     binaries=_binaries,
-    datas=[
-        (str(project_root / "config" / "defaults.yaml"), "config"),
-        (str(project_root / "src" / "easypal_next" / "network" / "static"), "easypal_next/network/static"),
-    ],
+    datas=_datas,
     hiddenimports=[
         "sounddevice",
         "numpy",
@@ -53,6 +59,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(_brand_ico) if _brand_ico.is_file() else None,
 )
 coll = COLLECT(
     exe,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from easypal_next.app.bootstrap import AppContext
-from easypal_next.app.paths import user_gallery_dir
+from easypal_next.app.paths import brand_icon_path, brand_logo_path, user_gallery_dir
 from easypal_next.core.events import GalleryUpdatedEvent, LogEvent, SessionStateChangedEvent
 from easypal_next.core.session import SessionState
 from easypal_next.network.util import gallery_urls
@@ -40,12 +41,44 @@ class MainWindow(QMainWindow):
         self._vm = TransferViewModel(context.event_bus)
         self.setWindowTitle("EasyPal-Next")
         self.resize(1200, 800)
+        self.setStyleSheet(
+            "QMainWindow { background-color: #0f1419; }"
+            "QLabel { color: #e7ecf3; }"
+            "QToolBar { background: #1a3a5c; spacing: 8px; }"
+            "QProgressBar::chunk { background-color: #f5c518; }"
+        )
 
         central = QWidget()
         layout = QVBoxLayout(central)
 
+        brand_row = QHBoxLayout()
+        logo_path = brand_logo_path()
+        icon_path = brand_icon_path()
+        if logo_path.is_file():
+            logo_label = QLabel()
+            logo_label.setPixmap(
+                QPixmap(str(logo_path)).scaledToHeight(
+                    72, Qt.TransformationMode.SmoothTransformation
+                )
+            )
+            logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            brand_row.addWidget(logo_label)
+        elif icon_path.is_file():
+            icon_label = QLabel()
+            icon_label.setPixmap(
+                QPixmap(str(icon_path)).scaled(
+                    64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                )
+            )
+            brand_row.addWidget(icon_label)
+            title = QLabel("EasyPal-Next")
+            title.setStyleSheet("font-size: 28px; font-weight: bold; color: #f5c518;")
+            brand_row.addWidget(title)
+        brand_row.addStretch()
+        layout.addLayout(brand_row)
+
         header = QLabel(
-            f"EasyPal-Next · {context.config.callsign} · {context.config.modem.mode}"
+            f"{context.config.callsign} · {context.config.modem.mode}"
             f" · {'loopback' if context.config.transfer.loopback_mode else 'on-air'}"
         )
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)

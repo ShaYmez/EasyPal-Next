@@ -14,3 +14,10 @@ def test_resolve_libcodec2_explicit_path(tmp_path: Path):
     dll = tmp_path / "libcodec2.dll"
     dll.write_bytes(b"fake")
     assert resolve_libcodec2(str(dll)) == dll
+
+
+def test_brand_icon_path_exists():
+    from easypal_next.app.paths import brand_icon_path
+
+    path = brand_icon_path()
+    assert path.is_file(), f"brand icon missing: {path}"

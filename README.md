@@ -1,5 +1,9 @@
 # EasyPal-Next
 
+<p align="center">
+  <img src="resources/brand/easypal-next-logo.png" alt="EasyPal-Next" width="480">
+</p>
+
 **An open-source digital SSTV application — built in memory of Erik Sundstrup (VK4AES / VK4ESK, SK).**
 
 EasyPal brought error-corrected image and file transfer to amateur radio. When Erik became a silent key, development of the closed-source EasyPal ended. EasyPal-Next continues that legacy as a modern, patent-free, community-maintained successor.
@@ -23,6 +27,10 @@ pytest
 ```
 
 On-air testing: see [docs/on-air-test.md](docs/on-air-test.md).
+
+## Brand
+
+Cartoon-style logo in **royal blue**, **golden yellow**, and **white**. Assets in [`resources/brand/`](resources/brand/) (see [brand README](resources/brand/README.md)).
 
 ## Download / install (release)
 
@@ -106,6 +114,7 @@ Defaults ship in `config/defaults.yaml`. User overrides:
 ## Project structure
 
 ```
+resources/brand/   Logos and icons (blue / yellow / white cartoon brand)
 src/easypal_next/
 ├── app/          Application bootstrap and paths
 ├── audio/        Sound card I/O
