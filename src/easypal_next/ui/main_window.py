@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -49,6 +50,7 @@ class MainWindow(QMainWindow):
 
         local_url, lan_url = gallery_urls(context.config.network.port)
         self._gallery_url = local_url
+        self._lan_url = lan_url
         self._actions = build_menus(self, local_url)
         build_toolbar(self, self._actions)
 
@@ -68,7 +70,16 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(False)
         transfer_layout.addWidget(self._file_label)
         transfer_layout.addWidget(self._progress)
-        transfer_box.setMaximumHeight(56)
+        gallery_row = QHBoxLayout()
+        gallery_row.setSpacing(6)
+        self._gallery_btn = self._gallery_button("Open Gallery", local_url)
+        gallery_row.addWidget(self._gallery_btn)
+        if lan_url:
+            self._lan_btn = self._gallery_button("Open LAN Gallery", lan_url)
+            gallery_row.addWidget(self._lan_btn)
+        gallery_row.addStretch()
+        transfer_layout.addLayout(gallery_row)
+        transfer_box.setMaximumHeight(80)
         root.addWidget(transfer_box)
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -139,20 +150,22 @@ class MainWindow(QMainWindow):
 
         self._fit_to_screen()
 
+    def _gallery_button(self, label: str, url: str) -> QPushButton:
+        btn = QPushButton(label)
+        btn.setObjectName("galleryButton")
+        btn.setToolTip(url)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+        return btn
+
     def _build_status_bar(self, local_url: str, lan_url: str | None) -> None:
         bar = QStatusBar()
         self.setStatusBar(bar)
         self._status_main = QLabel()
         bar.addWidget(self._status_main, stretch=1)
-        self._gallery_link = QLabel(f'<a href="{local_url}">Gallery</a>')
-        self._gallery_link.setObjectName("galleryLink")
-        self._gallery_link.setOpenExternalLinks(True)
-        bar.addPermanentWidget(self._gallery_link)
+        bar.addPermanentWidget(self._gallery_button("Gallery", local_url))
         if lan_url:
-            lan_link = QLabel(f'<a href="{lan_url}">LAN</a>')
-            lan_link.setObjectName("galleryLink")
-            lan_link.setOpenExternalLinks(True)
-            bar.addPermanentWidget(lan_link)
+            bar.addPermanentWidget(self._gallery_button("LAN", lan_url))
 
     def _connect_actions(self, lan_url: str | None) -> None:
         a = self._actions

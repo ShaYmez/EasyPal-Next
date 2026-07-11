@@ -111,6 +111,20 @@ QStatusBar QLabel#galleryLink {
     color: #f5c518;
 }
 
+QPushButton#galleryButton {
+    background: #1e4d8c;
+    color: #ffffff;
+    border: none;
+    border-radius: 3px;
+    padding: 3px 12px;
+    font-size: 11px;
+    min-height: 22px;
+}
+
+QPushButton#galleryButton:hover {
+    background: #2563a8;
+}
+
 QListWidget {
     background: #1a1f28;
     border: 1px solid #333;

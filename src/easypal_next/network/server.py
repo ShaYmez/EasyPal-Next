@@ -98,12 +98,26 @@ class NetworkServer:
             )
 
         def run() -> None:
-            uvicorn.run(
-                self._app,
-                host=self._config.host,
-                port=self._config.port,
-                log_level="warning",
-            )
+            try:
+                uvicorn.run(
+                    self._app,
+                    host=self._config.host,
+                    port=self._config.port,
+                    log_level="warning",
+                )
+            except OSError as exc:
+                self._event_bus.publish(
+                    LogEvent(
+                        level="error",
+                        message=f"LAN gallery server failed on port {self._config.port}: {exc}",
+                    )
+                )
 
         self._thread = threading.Thread(target=run, name="easypal-network", daemon=True)
         self._thread.start()
+        self._event_bus.publish(
+            LogEvent(
+                level="info",
+                message=f"LAN gallery starting on port {self._config.port}",
+            )
+        )

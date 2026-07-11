@@ -58,6 +58,12 @@ class FecConfig(BaseModel):
     chunk_size: int = 1024
 
 
+class TransferConfig(BaseModel):
+    loopback_mode: bool = True
+    """Milliseconds to wait after each modem burst (0 = fastest; use 5–20 on-air if needed)."""
+    pace_ms: int = 0
+
+
 class WaterfallConfig(BaseModel):
     enabled: bool = True
     sample_rate: int = 48000
@@ -101,10 +107,6 @@ class CommunityServerConfig(BaseModel):
     ftp_user: str | None = None
     ftp_password: str | None = None
     ftp_remote_dir: str = "/"
-
-
-class TransferConfig(BaseModel):
-    loopback_mode: bool = True
 
 
 class AppConfig(BaseModel):

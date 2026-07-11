@@ -42,6 +42,7 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
 
         tabs.addTab(self._build_general_tab(cfg), "General")
+        tabs.addTab(self._build_transfer_tab(cfg), "Transfer")
         tabs.addTab(self._build_audio_tab(cfg), "Audio")
         tabs.addTab(self._build_radio_tab(cfg), "Radio")
         tabs.addTab(self._build_waterfall_tab(cfg), "Waterfall")
@@ -89,6 +90,59 @@ class SettingsDialog(QDialog):
             QLabel("Restart the app after changing paths or loopback mode.")
         )
         return widget
+
+    def _build_transfer_tab(self, cfg: AppConfig) -> QWidget:
+        widget = QWidget()
+        form = QFormLayout(widget)
+
+        self._pace_ms = QSpinBox()
+        self._pace_ms.setRange(0, 100)
+        self._pace_ms.setSuffix(" ms")
+        self._pace_ms.setValue(cfg.transfer.pace_ms)
+        self._pace_ms.setToolTip(
+            "Delay after each modem burst. 0 = fastest (recommended for loopback). "
+            "Use 5–20 ms on-air only if the radio buffer overflows."
+        )
+
+        self._fec_chunk = QComboBox()
+        for size in (1024, 2048, 4096, 8192):
+            self._fec_chunk.addItem(f"{size} bytes", size)
+        idx = self._fec_chunk.findData(cfg.fec.chunk_size)
+        if idx >= 0:
+            self._fec_chunk.setCurrentIndex(idx)
+        else:
+            self._fec_chunk.setEditText(str(cfg.fec.chunk_size))
+
+        self._fec_preset = QComboBox()
+        self._fec_preset.addItem("Standard (balanced)", "standard")
+        self._fec_preset.addItem("Faster — larger chunks", "faster")
+        self._fec_preset.addItem("Fastest — large chunks, pace 0", "fastest")
+        self._fec_preset.currentIndexChanged.connect(self._apply_fec_preset)
+
+        form.addRow("Burst pace:", self._pace_ms)
+        form.addRow("FEC chunk size:", self._fec_chunk)
+        form.addRow("Speed preset:", self._fec_preset)
+        form.addRow(
+            QLabel(
+                "Tips: set pace to 0, use 4096-byte chunks, and disable "
+                "Waterfall TX on file for quickest transfers."
+            )
+        )
+        return widget
+
+    def _apply_fec_preset(self) -> None:
+        preset = self._fec_preset.currentData()
+        if preset == "faster":
+            self._set_fec_chunk(4096)
+            self._pace_ms.setValue(0)
+        elif preset == "fastest":
+            self._set_fec_chunk(8192)
+            self._pace_ms.setValue(0)
+
+    def _set_fec_chunk(self, size: int) -> None:
+        idx = self._fec_chunk.findData(size)
+        if idx >= 0:
+            self._fec_chunk.setCurrentIndex(idx)
 
     def _build_audio_tab(self, cfg: AppConfig) -> QWidget:
         widget = QWidget()
@@ -325,6 +379,10 @@ class SettingsDialog(QDialog):
         config = self._context.config
         config.callsign = self._callsign.text().strip() or "N0CALL"
         config.transfer.loopback_mode = self._loopback.isChecked()
+        config.transfer.pace_ms = self._pace_ms.value()
+        config.fec.chunk_size = int(
+            self._fec_chunk.currentData() or self._fec_chunk.currentText()
+        )
         config.network.gallery_dir = self._gallery_dir.text().strip() or None
         config.network.received_dir = self._received_dir.text().strip() or None
 

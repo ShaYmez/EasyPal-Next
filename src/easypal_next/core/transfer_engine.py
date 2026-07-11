@@ -227,7 +227,9 @@ class TransferEngine:
             loopback_buffer.append(audio)
         elif self._bridge:
             self._bridge.queue_tx(audio)
-        time.sleep(0.01)
+        pace = self._config.transfer.pace_ms
+        if pace > 0:
+            time.sleep(pace / 1000.0)
 
     def _run_tx(self, file_path: Path) -> None:
         bridge_started_here = False
