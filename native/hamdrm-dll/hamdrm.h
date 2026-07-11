@@ -51,6 +51,9 @@
 
 //********************************************************************
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 	// If you get something different than 0, something went the wrong way
 	// 1 -> Receiver thread dead on Fatal
@@ -147,6 +150,8 @@
 
 //********************************************************************
 
-
+#ifdef __cplusplus
+}
+#endif
 
 

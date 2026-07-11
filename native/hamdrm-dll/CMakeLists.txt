@@ -120,6 +120,9 @@ if(MSVC)
   target_compile_options(hamdrm PRIVATE
     /wd4244 /wd4267 /wd4996 /wd4305 /wd4018 /wd4101 /wd4100 /wd4505
   )
+else()
+  # Ship without MinGW runtime DLLs beside hamdrm.dll
+  target_link_options(hamdrm PRIVATE -static-libgcc -static-libstdc++ -static)
 endif()
 
 target_link_libraries(hamdrm PRIVATE
