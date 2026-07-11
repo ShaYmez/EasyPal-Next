@@ -20,6 +20,8 @@ class MainActions:
     tune: QAction
     send_wftxt: QAction
     waterfall_tx_on_file: QAction
+    live_waterfall: QAction
+    auto_rx: QAction
     theme_light: QAction
     theme_dark: QAction
     open_gallery: QAction
@@ -37,6 +39,8 @@ def build_menus(window: QMainWindow, gallery_url: str) -> MainActions:
         tune=QAction("&Tune", window),
         send_wftxt=QAction("Send &WFTxt", window),
         waterfall_tx_on_file=QAction("Waterfall TX on &file", window),
+        live_waterfall=QAction("Live &waterfall", window),
+        auto_rx=QAction("&Auto RX", window),
         theme_light=QAction("&Light theme", window),
         theme_dark=QAction("&Dark theme", window),
         open_gallery=QAction("&Open gallery in browser", window),
@@ -53,6 +57,8 @@ def build_menus(window: QMainWindow, gallery_url: str) -> MainActions:
     actions.tune.setCheckable(True)
     actions.send_wftxt.setShortcut(QKeySequence("F7"))
     actions.waterfall_tx_on_file.setCheckable(True)
+    actions.live_waterfall.setCheckable(True)
+    actions.auto_rx.setCheckable(True)
     actions.theme_light.setCheckable(True)
     actions.theme_dark.setCheckable(True)
 
@@ -65,11 +71,13 @@ def build_menus(window: QMainWindow, gallery_url: str) -> MainActions:
     transfer_menu = window.menuBar().addMenu("&Transfer")
     transfer_menu.addAction(actions.transmit)
     transfer_menu.addAction(actions.receive)
+    transfer_menu.addAction(actions.auto_rx)
     transfer_menu.addAction(actions.tune)
     transfer_menu.addAction(actions.abort)
 
     waterfall_menu = window.menuBar().addMenu("&Waterfall")
     waterfall_menu.addAction(actions.send_wftxt)
+    waterfall_menu.addAction(actions.live_waterfall)
     waterfall_menu.addAction(actions.waterfall_tx_on_file)
 
     view_menu = window.menuBar().addMenu("&View")
@@ -94,6 +102,7 @@ def build_toolbar(window: QMainWindow, actions: MainActions) -> QToolBar:
     toolbar.addAction(actions.load_pic)
     toolbar.addAction(actions.transmit)
     toolbar.addAction(actions.receive)
+    toolbar.addAction(actions.auto_rx)
     toolbar.addAction(actions.tune)
     toolbar.addAction(actions.abort)
     return toolbar

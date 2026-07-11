@@ -10,7 +10,7 @@ import numpy as np
 
 from easypal_next.audio.engine import AudioEngine
 from easypal_next.audio.resampler import downsample_to_modem, upsample_from_modem
-from easypal_next.audio.waterfall_tap import WaterfallTap
+from easypal_next.audio.waterfall_tap import FftWindow, WaterfallTap
 from easypal_next.modem.interface import ModemInterface
 
 SpectrumCallback = Callable[[list[float]], None]
@@ -26,6 +26,9 @@ class ModemBridge:
         audio_rate: int,
         modem_rate: int,
         on_spectrum: SpectrumCallback | None = None,
+        fft_size: int = 1024,
+        fft_overlap: float = 0.5,
+        fft_window: FftWindow = "hann",
     ) -> None:
         self._audio = audio
         self._modem = modem
@@ -34,7 +37,17 @@ class ModemBridge:
         self._tx_queue: Queue[np.ndarray] = Queue()
         self._running = False
         self._thread: threading.Thread | None = None
-        self._waterfall_tap = WaterfallTap(on_spectrum=on_spectrum) if on_spectrum else None
+        self._rx_spectrum_enabled = True
+        self._waterfall_tap = (
+            WaterfallTap(
+                fft_size=fft_size,
+                overlap=fft_overlap,
+                window=fft_window,
+                on_spectrum=on_spectrum,
+            )
+            if on_spectrum
+            else None
+        )
 
     @property
     def is_running(self) -> bool:
@@ -55,12 +68,24 @@ class ModemBridge:
             self._thread = None
         self._audio.stop()
 
+    def set_rx_spectrum_enabled(self, enabled: bool) -> None:
+        self._rx_spectrum_enabled = enabled
+
+    def cancel_tx(self) -> None:
+        while True:
+            try:
+                self._tx_queue.get_nowait()
+            except Empty:
+                break
+        if hasattr(self._audio, "clear_tx_buffer"):
+            self._audio.clear_tx_buffer()
+
     def queue_tx(self, samples: np.ndarray) -> None:
         """Queue int16 modem-rate samples for upsampling and playback."""
         self._tx_queue.put(samples.astype(np.int16))
 
     def _on_audio_rx(self, samples: np.ndarray) -> None:
-        if self._waterfall_tap:
+        if self._waterfall_tap and self._rx_spectrum_enabled:
             self._waterfall_tap.feed(samples)
         modem_samples = downsample_to_modem(samples, self._audio_rate, self._modem_rate)
         self._modem.decode_samples(modem_samples)

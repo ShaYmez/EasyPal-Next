@@ -66,12 +66,16 @@ class TransferConfig(BaseModel):
     tune_max_seconds: int = 30
     """Radio emission mode — guides Tune hints (FM, AM, or SSB/USB)."""
     radio_emission: Literal["fm", "am", "ssb"] = "fm"
+    """When on-air, keep listening and accept incoming transfers automatically."""
+    auto_rx: bool = False
 
 
 class WaterfallConfig(BaseModel):
     enabled: bool = True
+    """Live scrolling spectrum from audio input / TX monitor."""
+    live_enabled: bool = True
     sample_rate: int = 48000
-    freq_min_hz: int = 500
+    freq_min_hz: int = 100
     freq_max_hz: int = 2500
     line_time_ms: float = 8.0
     line_repeats: int = 2
@@ -83,8 +87,20 @@ class WaterfallConfig(BaseModel):
     end_wav: str | None = None
     tx_monitor: bool = True
     colormap: Literal["green", "heat", "grayscale"] = "green"
-    min_db: float = -80.0
+    min_db: float = -60.0
     max_db: float = 0.0
+    """FFT size — larger = finer frequency detail, slower updates."""
+    fft_size: int = 4096
+    """GUI refresh interval for spectrum rows (ms). Lower = faster scroll."""
+    fft_interval_ms: int = 30
+    """FFT window function (Hann is typical for SDR / spectrograms)."""
+    fft_window: Literal["none", "hann", "hamming", "blackman"] = "hann"
+    """Overlap fraction between FFT frames (0–0.875). Higher = smoother waterfall."""
+    fft_overlap: float = 0.8
+    """History lines kept in the scrolling buffer (time axis depth)."""
+    history_rows: int = 512
+    """Lines to advance the waterfall per FFT row (scroll speed)."""
+    scroll_pixels: int = 5
 
 
 class UiConfig(BaseModel):

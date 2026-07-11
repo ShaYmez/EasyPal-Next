@@ -3,25 +3,44 @@
 from __future__ import annotations
 
 import time
+from typing import Literal
 
-from PySide6.QtCore import QObject, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Slot
+from PySide6.QtWidgets import QProgressBar, QSizePolicy, QVBoxLayout, QWidget, QLabel
 
 from easypal_next.config.schema import WaterfallConfig
-from easypal_next.core.events import EventBus, SpectrumEvent
+from easypal_next.core.events import EventBus
 from easypal_next.core.session import SessionState
+from easypal_next.ui.spectrum_relay import SpectrumRelay
+from easypal_next.ui.widgets.waterfall_canvas import WaterfallCanvas
+
+_TX_SPECTRUM_STATES = frozenset(
+    {
+        SessionState.TUNING,
+        SessionState.TX_ARMED,
+        SessionState.TX_WATERFALL_HEADER,
+        SessionState.TX_ACTIVE,
+        SessionState.TX_WATERFALL_FOOTER,
+    }
+)
 
 
-class _SpectrumBridge(QObject):
-    spectrum_received = Signal(object, int)
+def spectrum_source_accepted(
+    session_state: SessionState,
+    source: Literal["rx", "tx"],
+) -> bool:
+    """Return whether a spectrum row should be shown for the current session."""
+    if session_state in _TX_SPECTRUM_STATES:
+        return source == "tx"
+    return source == "rx"
 
-    def __init__(self, event_bus: EventBus) -> None:
-        super().__init__()
-        event_bus.subscribe(SpectrumEvent, self._on_spectrum)
 
-    def _on_spectrum(self, event: SpectrumEvent) -> None:
-        self.spectrum_received.emit(event.bins, event.sample_rate)
+def peak_db_to_level_pct(peak_db: float, min_db: float, max_db: float) -> int:
+    span = max_db - min_db
+    if span <= 0:
+        return 0
+    level = (peak_db - min_db) / span
+    return int(max(0.0, min(1.0, level)) * 100)
 
 
 class WaterfallWidget(QWidget):
@@ -37,36 +56,54 @@ class WaterfallWidget(QWidget):
         self._loopback = True
         self._radio_emission = "fm"
         self._active = False
-        self._waterfall_image: QImage | None = None
         self._last_paint = 0.0
 
         self._band_label = QLabel(
             f"{config.freq_min_hz}–{config.freq_max_hz} Hz · live spectrum"
         )
 
-        self._label = QLabel()
-        self._label.setObjectName("waterfallDisplay")
-        self._label.setMinimumSize(120, 80)
-        self._label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._level_bar = QProgressBar()
+        self._level_bar.setObjectName("audioLevelBar")
+        self._level_bar.setRange(0, 100)
+        self._level_bar.setValue(0)
+        self._level_bar.setTextVisible(False)
+        self._level_bar.setFixedHeight(8)
+        self._level_bar.setToolTip("Input level (peak dB in band)")
+
+        self._level_label = QLabel("Input: —")
+        self._level_label.setObjectName("audioLevelLabel")
+
+        self._canvas = WaterfallCanvas(config)
         self._update_idle_text()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
         layout.addWidget(self._band_label)
-        layout.addWidget(self._label, stretch=1)
+        level_row = QVBoxLayout()
+        level_row.setSpacing(1)
+        level_row.addWidget(self._level_bar)
+        level_row.addWidget(self._level_label)
+        layout.addLayout(level_row)
+        layout.addWidget(self._canvas, stretch=1)
 
-        self._bridge = _SpectrumBridge(event_bus)
-        self._bridge.spectrum_received.connect(
+        self._relay = SpectrumRelay(event_bus, config.fft_interval_ms, self)
+        self._relay.spectrum_received.connect(
             self._append_spectrum,
             Qt.ConnectionType.QueuedConnection,
         )
 
+    def set_live_enabled(self, enabled: bool) -> None:
+        self._config.live_enabled = enabled
+        if not enabled:
+            self.reset_live()
+
     def reset_live(self) -> None:
         """Clear scrolled spectrum and show idle / session hint text."""
         self._active = False
-        self._waterfall_image = None
+        self._level_bar.setValue(0)
+        self._level_label.setText("Input: —")
+        self._canvas.reset()
         self._update_idle_text()
 
     def update_config(self, config: WaterfallConfig) -> None:
@@ -74,6 +111,10 @@ class WaterfallWidget(QWidget):
         self._band_label.setText(
             f"{config.freq_min_hz}–{config.freq_max_hz} Hz · live spectrum"
         )
+        self._relay.set_interval_ms(config.fft_interval_ms)
+        self._canvas.update_config(config)
+        if not config.live_enabled:
+            self.reset_live()
 
     def set_session_context(
         self,
@@ -98,7 +139,9 @@ class WaterfallWidget(QWidget):
         return "Tuning — adjust audio drive / VOX; watch waterfall"
 
     def _update_idle_text(self) -> None:
-        if self._session_state == SessionState.TUNING:
+        if not self._config.live_enabled:
+            text = "Live waterfall disabled — enable in toolbar or Settings"
+        elif self._session_state == SessionState.TUNING:
             text = self._tuning_hint(self._radio_emission)
         elif self._session_state == SessionState.RX_LISTEN:
             text = (
@@ -109,9 +152,8 @@ class WaterfallWidget(QWidget):
         elif self._loopback:
             text = "Waterfall activates during transmit (loopback)"
         else:
-            text = "Live input monitor — check audio input device if blank"
-        self._label.setText(text)
-        self._label.setPixmap(QPixmap())
+            text = "Live input monitor — speak or tap mic; level bar should move"
+        self._canvas.set_idle_text(text)
 
     def _slice_bins(self, bins: list[float], sample_rate: int) -> list[float]:
         if not bins or sample_rate <= 0:
@@ -127,57 +169,39 @@ class WaterfallWidget(QWidget):
             return bins
         return bins[i0 : i1 + 1]
 
-    def _level_to_color(self, level: float) -> QColor:
-        level = max(0.0, min(1.0, level))
-        cmap = self._config.colormap
-        if cmap == "grayscale":
-            v = int(level * 255)
-            return QColor(v, v, v)
-        if cmap == "heat":
-            return QColor(int(level * 255), int(level * 180), int((1.0 - level) * 80))
-        green = int(level * 255)
-        return QColor(0, green, int(level * 128))
+    def _update_level_meter(self, peak_db: float) -> None:
+        pct = peak_db_to_level_pct(peak_db, self._config.min_db, self._config.max_db)
+        self._level_bar.setValue(pct)
+        self._level_label.setText(f"Input: {peak_db:.0f} dB")
 
-    def _db_to_level(self, db: float) -> float:
-        span = self._config.max_db - self._config.min_db
-        if span <= 0:
-            return 0.0
-        return (db - self._config.min_db) / span
-
-    @Slot(object, int)
-    def _append_spectrum(self, bins: list[float], sample_rate: int) -> None:
-        if not bins:
+    @Slot(object, int, str, float)
+    def _append_spectrum(
+        self,
+        bins: list[float],
+        sample_rate: int,
+        source: str,
+        peak_db: float,
+    ) -> None:
+        if not bins or not self._config.live_enabled:
             return
+        if not spectrum_source_accepted(self._session_state, source):  # type: ignore[arg-type]
+            return
+
+        sliced = self._slice_bins(bins, sample_rate)
+        band_peak = max(sliced) if sliced else peak_db
+        self._update_level_meter(band_peak)
+
         now = time.monotonic()
-        if now - self._last_paint < 0.05:
+        min_interval = self._config.fft_interval_ms / 1000.0
+        if now - self._last_paint < min_interval:
             return
         self._last_paint = now
 
-        bins = self._slice_bins(bins, sample_rate)
+        if not sliced:
+            return
         self._active = True
-        cols = len(bins)
-        row = QImage(cols, 1, QImage.Format.Format_RGB32)
-        for col, db in enumerate(bins):
-            level = self._db_to_level(db)
-            row.setPixelColor(col, 0, self._level_to_color(level))
-
-        label_w = max(1, self._label.width())
-        label_h = max(1, self._label.height())
-
-        if self._waterfall_image is None or self._waterfall_image.width() != label_w:
-            self._waterfall_image = QImage(label_w, label_h, QImage.Format.Format_RGB32)
-            self._waterfall_image.fill(QColor(10, 10, 18))
-
-        assert self._waterfall_image is not None
-        painter = QPainter(self._waterfall_image)
-        painter.drawImage(0, label_h - 1, self._waterfall_image, 0, label_h - 2, label_w, label_h - 1)
-        scaled_row = row.scaled(label_w, 1, Qt.AspectRatioMode.IgnoreAspectRatio)
-        painter.drawImage(0, 0, scaled_row)
-        painter.end()
-
-        self._label.setPixmap(QPixmap.fromImage(self._waterfall_image))
-        self._label.setText("")
+        self._canvas.append_row(sliced)
 
     def resizeEvent(self, event) -> None:  # noqa: ANN001, N802
         super().resizeEvent(event)
-        self._waterfall_image = None
+        self._canvas.update()

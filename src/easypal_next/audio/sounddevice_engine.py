@@ -51,10 +51,11 @@ class SoundDeviceEngine(AudioEngine):
         self._block_size = block_size
 
     def _input_callback(self, indata: np.ndarray, frames: int, time, status) -> None:  # noqa: ARG002
-        if status and self._on_rx:
-            pass
         if self._on_rx is not None:
-            self._on_rx(indata.copy().reshape(-1))
+            chunk = indata.copy().reshape(-1)
+            if chunk.dtype != np.int16:
+                chunk = (np.clip(chunk, -1.0, 1.0) * 32767.0).astype(np.int16)
+            self._on_rx(chunk)
 
     def _output_callback(self, outdata: np.ndarray, frames: int, time, status) -> None:  # noqa: ARG002
         needed = frames
@@ -79,7 +80,7 @@ class SoundDeviceEngine(AudioEngine):
         self._input_stream = sd.InputStream(
             device=self._input_device,
             channels=1,
-            dtype="int16",
+            dtype="float32",
             samplerate=self._sample_rate,
             blocksize=self._block_size,
             callback=self._input_callback,
@@ -98,6 +99,14 @@ class SoundDeviceEngine(AudioEngine):
 
     def write_tx(self, samples: np.ndarray) -> None:
         self._tx_queue.put(samples.astype(np.int16))
+
+    def clear_tx_buffer(self) -> None:
+        while True:
+            try:
+                self._tx_queue.get_nowait()
+            except Empty:
+                break
+        self._tx_carry = np.array([], dtype=np.int16)
 
     def stop(self) -> None:
         if self._input_stream:

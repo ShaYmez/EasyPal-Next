@@ -156,10 +156,26 @@ QPlainTextEdit#logView, QTextEdit#logView {
     border: 1px solid #d0d7de;
 }
 
-QLabel#waterfallDisplay {
+QWidget#waterfallDisplay {
     background: #0a0a12;
     border: 1px solid #333;
     color: #888888;
+}
+
+QProgressBar#audioLevelBar {
+    background: #1a1a24;
+    border: 1px solid #333;
+    border-radius: 3px;
+}
+
+QProgressBar#audioLevelBar::chunk {
+    background: #3fb950;
+    border-radius: 2px;
+}
+
+QLabel#audioLevelLabel {
+    color: #666;
+    font-size: 10px;
 }
 
 QSplitter::handle {

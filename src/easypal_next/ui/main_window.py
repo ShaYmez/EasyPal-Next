@@ -26,10 +26,11 @@ from easypal_next import __version__
 from easypal_next.app.bootstrap import AppContext
 from easypal_next.app.paths import brand_icon_path, brand_logo_path
 from easypal_next.config.loader import save_config
-from easypal_next.core.events import GalleryUpdatedEvent, LogEvent, SessionStateChangedEvent
+from easypal_next.core.events import GalleryUpdatedEvent, LogEvent
 from easypal_next.core.session import SessionState
-from easypal_next.network.util import gallery_urls
+from easypal_next.network.util import preferred_gallery_url
 from easypal_next.ui.menus import build_menus, build_toolbar
+from easypal_next.ui.session_relay import SessionStateRelay
 from easypal_next.ui.theme import apply_theme
 from easypal_next.ui.view_models.transfer_vm import TransferViewModel
 from easypal_next.ui.widgets.log_panel import LogPanel
@@ -48,10 +49,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("EasyPal-Next")
         self.setMinimumSize(960, 600)
 
-        local_url, lan_url = gallery_urls(context.config.network.port)
-        self._gallery_url = local_url
-        self._lan_url = lan_url
-        self._actions = build_menus(self, local_url)
+        self._gallery_url = preferred_gallery_url(context.config.network.port)
+        self._actions = build_menus(self, self._gallery_url)
         build_toolbar(self, self._actions)
 
         central = QWidget()
@@ -72,11 +71,8 @@ class MainWindow(QMainWindow):
         transfer_layout.addWidget(self._progress)
         gallery_row = QHBoxLayout()
         gallery_row.setSpacing(6)
-        self._gallery_btn = self._gallery_button("Open Gallery", local_url)
+        self._gallery_btn = self._gallery_button("Open Gallery", self._gallery_url)
         gallery_row.addWidget(self._gallery_btn)
-        if lan_url:
-            self._lan_btn = self._gallery_button("Open LAN Gallery", lan_url)
-            gallery_row.addWidget(self._lan_btn)
         gallery_row.addStretch()
         transfer_layout.addLayout(gallery_row)
         transfer_box.setMaximumHeight(80)
@@ -133,10 +129,13 @@ class MainWindow(QMainWindow):
         root.addWidget(body_splitter, stretch=1)
 
         self.setCentralWidget(central)
-        self._build_status_bar(local_url, lan_url)
-        self._connect_actions(lan_url)
+        self._build_status_bar()
+        self._connect_actions()
         self._sync_theme_checks()
         self._actions.waterfall_tx_on_file.setChecked(context.config.waterfall.enabled)
+        self._actions.live_waterfall.setChecked(context.config.waterfall.live_enabled)
+        self._actions.auto_rx.setChecked(context.config.transfer.auto_rx)
+        self._sync_auto_rx_action_state()
         self._waterfall.set_session_context(
             SessionState.IDLE,
             context.config.transfer.loopback_mode,
@@ -145,15 +144,21 @@ class MainWindow(QMainWindow):
         self._update_tune_action_state()
         self._update_status_text()
 
-        context.event_bus.subscribe(SessionStateChangedEvent, self._on_state_changed)
         context.event_bus.subscribe(LogEvent, self._on_log)
         context.event_bus.subscribe(GalleryUpdatedEvent, self._on_gallery_updated)
+        self._state_relay = SessionStateRelay(context.event_bus, self)
+        self._state_relay.state_changed.connect(
+            self._on_state_changed,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._vm.progress_changed.connect(self._on_progress)
         self._vm.state_changed.connect(self._on_vm_state)
 
         if not context.config.transfer.loopback_mode:
             try:
                 context.transfer_engine.start_audio_monitor()
+                if context.config.transfer.auto_rx:
+                    context.transfer_engine.start_auto_rx()
             except Exception as exc:
                 self.statusBar().showMessage(f"Audio monitor failed: {exc}", 8000)
 
@@ -167,26 +172,26 @@ class MainWindow(QMainWindow):
         btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
         return btn
 
-    def _build_status_bar(self, local_url: str, lan_url: str | None) -> None:
+    def _build_status_bar(self) -> None:
         bar = QStatusBar()
         self.setStatusBar(bar)
         self._status_main = QLabel()
         bar.addWidget(self._status_main, stretch=1)
-        bar.addPermanentWidget(self._gallery_button("Gallery", local_url))
-        if lan_url:
-            bar.addPermanentWidget(self._gallery_button("LAN", lan_url))
+        bar.addPermanentWidget(self._gallery_button("Open Gallery", self._gallery_url))
 
-    def _connect_actions(self, lan_url: str | None) -> None:
+    def _connect_actions(self) -> None:
         a = self._actions
         a.load_pic.triggered.connect(self._load_pic)
         a.preferences.triggered.connect(self._open_settings)
         a.exit_app.triggered.connect(self.close)
         a.transmit.triggered.connect(self._transmit)
         a.receive.triggered.connect(self._receive)
-        a.tune.triggered.connect(self._toggle_tune)
+        a.tune.toggled.connect(self._toggle_tune)
         a.abort.triggered.connect(self._abort)
         a.send_wftxt.triggered.connect(self._send_wftxt)
         a.waterfall_tx_on_file.toggled.connect(self._on_waterfall_toggled)
+        a.live_waterfall.toggled.connect(self._on_live_waterfall_toggled)
+        a.auto_rx.toggled.connect(self._on_auto_rx_toggled)
         a.theme_light.triggered.connect(lambda: self._set_theme("light"))
         a.theme_dark.triggered.connect(lambda: self._set_theme("dark"))
         a.open_gallery.triggered.connect(
@@ -195,6 +200,41 @@ class MainWindow(QMainWindow):
         a.about.triggered.connect(self._show_about)
         self._wftxt.send_requested.connect(self._send_wftxt)
 
+    def _sync_auto_rx_action_state(self) -> None:
+        loopback = self._context.config.transfer.loopback_mode
+        self._actions.auto_rx.setEnabled(not loopback)
+        if loopback:
+            self._actions.auto_rx.setToolTip("Auto RX requires on-air mode")
+        else:
+            self._actions.auto_rx.setToolTip(
+                "Keep listening for incoming transfers (DATAC3 FILE_META trigger)"
+            )
+
+    def _on_live_waterfall_toggled(self, checked: bool) -> None:
+        self._context.config.waterfall.live_enabled = checked
+        save_config(self._context.config)
+        self._waterfall.set_live_enabled(checked)
+
+    def _on_auto_rx_toggled(self, checked: bool) -> None:
+        if self._context.config.transfer.loopback_mode:
+            self._actions.auto_rx.setChecked(False)
+            QMessageBox.warning(
+                self,
+                "Auto RX",
+                "Auto RX requires on-air mode. Disable loopback in Settings and restart.",
+            )
+            return
+        self._context.config.transfer.auto_rx = checked
+        save_config(self._context.config)
+        if checked:
+            try:
+                self._context.transfer_engine.start_auto_rx()
+            except Exception as exc:
+                self._actions.auto_rx.setChecked(False)
+                QMessageBox.critical(self, "Auto RX", str(exc))
+        elif self._context.transfer_engine.state == SessionState.RX_LISTEN:
+            self._context.transfer_engine.abort()
+
     def _update_tune_action_state(self) -> None:
         loopback = self._context.config.transfer.loopback_mode
         state = self._context.transfer_engine.state
@@ -202,7 +242,9 @@ class MainWindow(QMainWindow):
         self._actions.tune.setEnabled(
             not loopback and state in (SessionState.IDLE, SessionState.TUNING)
         )
+        self._actions.tune.blockSignals(True)
         self._actions.tune.setChecked(tuning)
+        self._actions.tune.blockSignals(False)
         emission = self._context.config.transfer.radio_emission.upper()
         if loopback:
             tip = "Tune requires on-air mode — disable loopback in Settings"
@@ -274,14 +316,51 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._context, self)
         if dialog.exec():
-            loopback_before = self._context.config.transfer.loopback_mode
+            cfg = self._context.config
+            loopback_before = cfg.transfer.loopback_mode
+            audio_before = (
+                cfg.audio.input_device,
+                cfg.audio.output_device,
+                cfg.audio.sample_rate,
+                cfg.audio.block_size,
+            )
+            waterfall_before = (
+                cfg.waterfall.fft_size,
+                cfg.waterfall.fft_overlap,
+                cfg.waterfall.fft_window,
+            )
             config = dialog.apply()
             loopback_after = config.transfer.loopback_mode
-            if loopback_before != loopback_after or not loopback_after:
+            audio_after = (
+                config.audio.input_device,
+                config.audio.output_device,
+                config.audio.sample_rate,
+                config.audio.block_size,
+            )
+            waterfall_after = (
+                config.waterfall.fft_size,
+                config.waterfall.fft_overlap,
+                config.waterfall.fft_window,
+            )
+            needs_audio_refresh = (
+                loopback_before != loopback_after
+                or not loopback_after
+                or audio_before != audio_after
+                or waterfall_before != waterfall_after
+            )
+            if needs_audio_refresh:
                 self._context.refresh_modem_bridge()
+            else:
+                self._context.transfer_engine.reload_spectrum_tap()
             self._wftxt.sync_from_config(config.waterfall)
             self._waterfall.update_config(config.waterfall)
             self._actions.waterfall_tx_on_file.setChecked(config.waterfall.enabled)
+            self._actions.live_waterfall.setChecked(config.waterfall.live_enabled)
+            self._waterfall.set_live_enabled(config.waterfall.live_enabled)
+            self._actions.auto_rx.setChecked(config.transfer.auto_rx)
+            self._sync_auto_rx_action_state()
+            if config.transfer.auto_rx and not config.transfer.loopback_mode:
+                self._context.transfer_engine.start_auto_rx()
             self._update_tune_action_state()
             if config.ui.theme != self._context.config.ui.theme:
                 self._set_theme(config.ui.theme)
@@ -356,20 +435,17 @@ class MainWindow(QMainWindow):
             f"Gallery: {self._gallery_url}",
         )
 
-    def _on_state_changed(self, event: SessionStateChangedEvent) -> None:
+    def _on_state_changed(self, state: SessionState) -> None:
         self._waterfall.set_session_context(
-            event.state,
+            state,
             self._context.config.transfer.loopback_mode,
             self._context.config.transfer.radio_emission,
         )
-        if event.state == SessionState.IDLE:
+        if state == SessionState.IDLE:
             self._wftxt.set_transmitting(False)
-            self._waterfall.reset_live()
-        elif event.state == SessionState.TUNING:
-            self._waterfall.reset_live()
         self._update_tune_action_state()
         self._update_status_text()
-        self.statusBar().showMessage(f"State → {event.state.value}", 4000)
+        self.statusBar().showMessage(f"State → {state.value}", 4000)
 
     def _on_vm_state(self, state: str) -> None:
         self._update_status_text()

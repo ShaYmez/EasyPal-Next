@@ -25,6 +25,7 @@ transfer:
   pace_ms: 0
   tune_max_seconds: 30
   radio_emission: fm
+  auto_rx: false
 
 fec:
   k: 16
@@ -33,8 +34,9 @@ fec:
 
 waterfall:
   enabled: true
+  live_enabled: true
   sample_rate: 48000
-  freq_min_hz: 500
+  freq_min_hz: 100
   freq_max_hz: 2500
   line_time_ms: 8.0
   line_repeats: 2
@@ -46,8 +48,14 @@ waterfall:
   end_wav: null
   tx_monitor: true
   colormap: green
-  min_db: -80.0
+  min_db: -60.0
   max_db: 0.0
+  fft_size: 4096
+  fft_interval_ms: 30
+  fft_window: hann
+  fft_overlap: 0.8
+  history_rows: 512
+  scroll_pixels: 5
 
 network:
   enabled: true

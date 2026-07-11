@@ -42,15 +42,7 @@ class AppContext:
         self.gallery = GalleryStore(gallery_dir, received_dir=received)
         self.modem_bridge: ModemBridge | None = None
         if not config.transfer.loopback_mode:
-            self.modem_bridge = ModemBridge(
-                self.audio_engine,
-                self.rx_modem,
-                config.audio.sample_rate,
-                config.modem.sample_rate,
-                on_spectrum=lambda bins: self.event_bus.publish(
-                    SpectrumEvent(bins=bins, sample_rate=config.audio.sample_rate)
-                ),
-            )
+            self.modem_bridge = self._make_modem_bridge(config)
         self.transfer_engine = TransferEngine(
             config,
             self.event_bus,
@@ -78,18 +70,35 @@ class AppContext:
         if config.transfer.loopback_mode:
             self.modem_bridge = None
         else:
-            self.modem_bridge = ModemBridge(
-                self.audio_engine,
-                self.rx_modem,
-                config.audio.sample_rate,
-                config.modem.sample_rate,
-                on_spectrum=lambda bins: self.event_bus.publish(
-                    SpectrumEvent(bins=bins, sample_rate=config.audio.sample_rate)
-                ),
-            )
+            self.modem_bridge = self._make_modem_bridge(config)
         self.transfer_engine.set_modem_bridge(self.modem_bridge)
+        self.transfer_engine.reload_spectrum_tap()
         if not config.transfer.loopback_mode and self.modem_bridge is not None:
             self.transfer_engine.start_audio_monitor()
+
+    def _make_modem_bridge(self, config: AppConfig) -> ModemBridge:
+        wf = config.waterfall
+        return ModemBridge(
+            self.audio_engine,
+            self.rx_modem,
+            config.audio.sample_rate,
+            config.modem.sample_rate,
+            on_spectrum=self._publish_rx_spectrum,
+            fft_size=wf.fft_size,
+            fft_overlap=wf.fft_overlap,
+            fft_window=wf.fft_window,
+        )
+
+    def _publish_rx_spectrum(self, bins: list[float]) -> None:
+        if not self.config.waterfall.live_enabled:
+            return
+        self.event_bus.publish(
+            SpectrumEvent(
+                bins=bins,
+                sample_rate=self.config.audio.sample_rate,
+                source="rx",
+            )
+        )
 
 
 def build_context() -> AppContext:

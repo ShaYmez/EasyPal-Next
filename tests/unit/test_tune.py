@@ -43,3 +43,27 @@ def test_stop_tune_noop_when_not_tuning():
     engine = _minimal_engine(loopback=False)
     assert engine.state == SessionState.IDLE
     engine.stop_tune()
+
+
+def test_stop_tune_halts_audio_when_tuning():
+    bridge = MagicMock()
+    engine = TransferEngine(
+        AppConfig(),
+        EventBus(),
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        modem_bridge=bridge,
+    )
+    config = engine._config  # noqa: SLF001
+    config.transfer.loopback_mode = False
+    engine._state = SessionState.TUNING
+    engine._worker = MagicMock()
+    engine._worker.is_alive.return_value = False
+
+    engine.stop_tune()
+
+    bridge.cancel_tx.assert_called()
+    assert engine.state == SessionState.IDLE

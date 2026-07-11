@@ -5,7 +5,7 @@ from __future__ import annotations
 import queue
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from easypal_next.core.session import SessionState
 
@@ -32,6 +32,7 @@ class RxImageReadyEvent:
 class SpectrumEvent:
     bins: list[float]
     sample_rate: int = 48000
+    source: Literal["rx", "tx"] = "rx"
 
 
 @dataclass(frozen=True)

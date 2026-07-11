@@ -141,11 +141,18 @@ class SettingsDialog(QDialog):
             "Guides Tune hints on the waterfall. RF mode is set on the radio; DATAC3 modem is unchanged."
         )
 
+        self._auto_rx = QCheckBox("Auto RX — listen for incoming transfers (on-air)")
+        self._auto_rx.setChecked(cfg.transfer.auto_rx)
+        self._auto_rx.setToolTip(
+            "Keeps the modem listening and starts receiving when a FILE_META packet is detected."
+        )
+
         form.addRow("Burst pace:", self._pace_ms)
         form.addRow("FEC chunk size:", self._fec_chunk)
         form.addRow("Speed preset:", self._fec_preset)
         form.addRow("Tune timeout:", self._tune_max_seconds)
         form.addRow("Radio emission:", self._radio_emission)
+        form.addRow(self._auto_rx)
         form.addRow(
             QLabel(
                 "Tips: set pace to 0, use 4096-byte chunks, and disable "
@@ -296,6 +303,8 @@ class SettingsDialog(QDialog):
 
         self._wf_enabled = QCheckBox("Enable waterfall header/footer on file TX")
         self._wf_enabled.setChecked(cfg.waterfall.enabled)
+        self._wf_live = QCheckBox("Enable live waterfall spectrum display")
+        self._wf_live.setChecked(cfg.waterfall.live_enabled)
         self._wf_monitor = QCheckBox("Show live spectrum during TX (Tune always shows spectrum)")
         self._wf_monitor.setChecked(cfg.waterfall.tx_monitor)
         self._wf_begin = QLineEdit(cfg.waterfall.begin_message)
@@ -325,8 +334,68 @@ class SettingsDialog(QDialog):
         self._wf_max_db.setRange(-60.0, 20.0)
         self._wf_max_db.setValue(cfg.waterfall.max_db)
 
+        self._wf_fft_size = QComboBox()
+        for size in (256, 512, 1024, 2048, 4096):
+            self._wf_fft_size.addItem(str(size), size)
+        fft_idx = self._wf_fft_size.findData(cfg.waterfall.fft_size)
+        if fft_idx >= 0:
+            self._wf_fft_size.setCurrentIndex(fft_idx)
+
+        self._wf_fft_interval = QSpinBox()
+        self._wf_fft_interval.setRange(16, 200)
+        self._wf_fft_interval.setSuffix(" ms")
+        self._wf_fft_interval.setToolTip("How often a new waterfall row is drawn (lower = faster scroll)")
+        self._wf_fft_interval.setValue(cfg.waterfall.fft_interval_ms)
+
+        self._wf_fft_window = QComboBox()
+        self._wf_fft_window.addItem("Hann (recommended)", "hann")
+        self._wf_fft_window.addItem("Hamming", "hamming")
+        self._wf_fft_window.addItem("Blackman", "blackman")
+        self._wf_fft_window.addItem("None (rectangular)", "none")
+        win_idx = self._wf_fft_window.findData(cfg.waterfall.fft_window)
+        if win_idx >= 0:
+            self._wf_fft_window.setCurrentIndex(win_idx)
+
+        self._wf_fft_overlap = QDoubleSpinBox()
+        self._wf_fft_overlap.setRange(0.0, 0.875)
+        self._wf_fft_overlap.setSingleStep(0.125)
+        self._wf_fft_overlap.setToolTip("Overlap between FFT frames — higher = smoother, more CPU")
+        self._wf_fft_overlap.setValue(cfg.waterfall.fft_overlap)
+
+        self._wf_scroll_pixels = QSpinBox()
+        self._wf_scroll_pixels.setRange(1, 8)
+        self._wf_scroll_pixels.setToolTip("Lines to scroll per FFT frame — higher = faster waterfall")
+        self._wf_scroll_pixels.setValue(cfg.waterfall.scroll_pixels)
+
+        self._wf_history_rows = QSpinBox()
+        self._wf_history_rows.setRange(64, 1024)
+        self._wf_history_rows.setSingleStep(64)
+        self._wf_history_rows.setToolTip("How many FFT lines of history to keep (time depth)")
+        self._wf_history_rows.setValue(cfg.waterfall.history_rows)
+
+        self._wf_freq_min = QSpinBox()
+        self._wf_freq_min.setRange(0, 24000)
+        self._wf_freq_min.setSuffix(" Hz")
+        self._wf_freq_min.setValue(cfg.waterfall.freq_min_hz)
+
+        self._wf_freq_max = QSpinBox()
+        self._wf_freq_max.setRange(100, 48000)
+        self._wf_freq_max.setSuffix(" Hz")
+        self._wf_freq_max.setValue(cfg.waterfall.freq_max_hz)
+
         form.addRow(self._wf_enabled)
+        form.addRow(self._wf_live)
         form.addRow(self._wf_monitor)
+        form.addRow(QLabel("<b>Live spectrum / FFT</b>"))
+        form.addRow("FFT size:", self._wf_fft_size)
+        form.addRow("Refresh interval:", self._wf_fft_interval)
+        form.addRow("FFT window:", self._wf_fft_window)
+        form.addRow("FFT overlap:", self._wf_fft_overlap)
+        form.addRow("History depth:", self._wf_history_rows)
+        form.addRow("Scroll speed:", self._wf_scroll_pixels)
+        form.addRow("Freq min:", self._wf_freq_min)
+        form.addRow("Freq max:", self._wf_freq_max)
+        form.addRow(QLabel("<b>WFTxt / file TX</b>"))
         form.addRow("Begin message:", self._wf_begin)
         form.addRow("End message:", self._wf_end)
         form.addRow("Font:", self._wf_font)
@@ -406,6 +475,7 @@ class SettingsDialog(QDialog):
         config.transfer.pace_ms = self._pace_ms.value()
         config.transfer.tune_max_seconds = self._tune_max_seconds.value()
         config.transfer.radio_emission = self._radio_emission.currentData() or "fm"
+        config.transfer.auto_rx = self._auto_rx.isChecked()
         config.fec.chunk_size = int(
             self._fec_chunk.currentData() or self._fec_chunk.currentText()
         )
@@ -440,6 +510,7 @@ class SettingsDialog(QDialog):
             )
 
         config.waterfall.enabled = self._wf_enabled.isChecked()
+        config.waterfall.live_enabled = self._wf_live.isChecked()
         config.waterfall.tx_monitor = self._wf_monitor.isChecked()
         config.waterfall.begin_message = self._wf_begin.text()
         config.waterfall.end_message = self._wf_end.text()
@@ -448,6 +519,16 @@ class SettingsDialog(QDialog):
         config.waterfall.colormap = self._wf_colormap.currentData()
         config.waterfall.min_db = self._wf_min_db.value()
         config.waterfall.max_db = self._wf_max_db.value()
+        config.waterfall.fft_size = int(self._wf_fft_size.currentData() or 1024)
+        config.waterfall.fft_interval_ms = self._wf_fft_interval.value()
+        config.waterfall.fft_window = self._wf_fft_window.currentData() or "hann"
+        config.waterfall.fft_overlap = self._wf_fft_overlap.value()
+        config.waterfall.history_rows = self._wf_history_rows.value()
+        config.waterfall.scroll_pixels = self._wf_scroll_pixels.value()
+        config.waterfall.freq_min_hz = self._wf_freq_min.value()
+        config.waterfall.freq_max_hz = max(
+            self._wf_freq_min.value() + 100, self._wf_freq_max.value()
+        )
         config.ui.theme = "dark" if self._theme_dark.isChecked() else "light"
 
         save_config(config)

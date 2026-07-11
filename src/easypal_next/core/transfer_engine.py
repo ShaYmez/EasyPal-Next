@@ -98,6 +98,14 @@ class TransferEngine:
             self._open_audio_devices()
         self._bridge_tx_only = False
         self._ensure_bridge_running()
+        if self._bridge and self._bridge.is_running:
+            in_dev = self._config.audio.input_device
+            self._event_bus.publish(
+                LogEvent(
+                    level="info",
+                    message=f"Audio monitor active (input device {in_dev if in_dev is not None else 'default'})",
+                )
+            )
 
     def _resume_audio_monitor_if_on_air(self) -> None:
         if self._config.transfer.loopback_mode or not self._bridge:
@@ -161,16 +169,47 @@ class TransferEngine:
 
     def _spectrum_callback(self, bins: list[float]) -> None:
         self._event_bus.publish(
-            SpectrumEvent(bins=bins, sample_rate=self._tx_modem.modem_sample_rate)
+            SpectrumEvent(
+                bins=bins,
+                sample_rate=self._tx_modem.modem_sample_rate,
+                source="tx",
+            )
         )
+
+    def _begin_tx_spectrum(self) -> None:
+        if self._bridge:
+            self._bridge.set_rx_spectrum_enabled(False)
+
+    def _end_tx_spectrum(self) -> None:
+        if self._bridge:
+            self._bridge.cancel_tx()
+            self._bridge.set_rx_spectrum_enabled(True)
+
+    def _halt_tx_audio(self) -> None:
+        if self._bridge:
+            self._bridge.cancel_tx()
+        try:
+            self._radio.ptt_off()
+        except Exception:
+            pass
+
+    def reload_spectrum_tap(self) -> None:
+        """Drop cached TX spectrum tap so FFT settings take effect."""
+        self._spectrum_tap = None
 
     def _ensure_spectrum_tap(self) -> WaterfallTap:
         if self._spectrum_tap is None:
-            self._spectrum_tap = WaterfallTap(on_spectrum=self._spectrum_callback)
+            wf = self._config.waterfall
+            self._spectrum_tap = WaterfallTap(
+                fft_size=wf.fft_size,
+                overlap=wf.fft_overlap,
+                window=wf.fft_window,
+                on_spectrum=self._spectrum_callback,
+            )
         return self._spectrum_tap
 
     def _feed_spectrum(self, audio: np.ndarray) -> None:
-        if len(audio) == 0:
+        if len(audio) == 0 or not self._config.waterfall.live_enabled:
             return
         live_tx = self._state in (
             SessionState.TUNING,
@@ -209,16 +248,46 @@ class TransferEngine:
             return
         self._on_modem_rx(packet)
 
+    def _arm_auto_rx_session(self) -> None:
+        self._rx_output_dir = self._gallery.received_dir()
+        self._rx_output_dir.mkdir(parents=True, exist_ok=True)
+        self._assembler = FileAssembler()
+        self._rx_framer.reset()
+        self._rx_listening = True
+        self._bridge_tx_only = False
+        if self._bridge:
+            self._ensure_bridge_running()
+        self._event_bus.publish(
+            LogEvent(level="info", message=f"Auto RX triggered — saving to {self._rx_output_dir}")
+        )
+        self._set_state(SessionState.RX_LISTEN)
+
+    def start_auto_rx(self) -> None:
+        """Keep modem listening on-air for unattended reception."""
+        if self._config.transfer.loopback_mode or not self._config.transfer.auto_rx:
+            return
+        if self._state != SessionState.IDLE:
+            return
+        self.initialize()
+        self._arm_auto_rx_session()
+
     def _on_modem_rx(self, payload: bytes) -> None:
         try:
             ptype, _seq, _total, body = parse_packet(payload)
         except ValueError:
             return
         if ptype == PacketType.FILE_META:
+            if not self._rx_listening:
+                if self._config.transfer.auto_rx and not self._config.transfer.loopback_mode:
+                    self._arm_auto_rx_session()
+                else:
+                    return
             meta, chunk_size = unpack_file_meta(body)
             self._assembler.set_meta(meta, chunk_size)
             self._set_state(SessionState.RX_ASSEMBLING)
             self._event_bus.publish(LogEvent(level="info", message=f"RX meta: {meta.filename}"))
+        elif not self._rx_listening:
+            return
         elif ptype == PacketType.FEC_SHARD:
             chunk_id, shard_index, data = unpack_fec_shard(body)
             if self._assembler.add_shard(chunk_id, shard_index, data):
@@ -243,7 +312,17 @@ class TransferEngine:
         self._event_bus.publish(GalleryUpdatedEvent(image_id=entry.id, path=str(out_path)))
         self._event_bus.publish(LogEvent(level="info", message=f"RX complete: {out_path.name}"))
         self._set_state(SessionState.RX_DONE)
-        self._set_state(SessionState.IDLE)
+        self._assembler = FileAssembler()
+        self._rx_framer.reset()
+        self._progress = TransferProgress()
+        if self._config.transfer.auto_rx and not self._config.transfer.loopback_mode:
+            self._rx_listening = True
+            self._ensure_bridge_running()
+            self._event_bus.publish(LogEvent(level="info", message="Auto RX listening…"))
+            self._set_state(SessionState.RX_LISTEN)
+        else:
+            self._rx_listening = False
+            self._set_state(SessionState.IDLE)
 
     def _next_seq(self) -> int:
         self._seq += 1
@@ -288,6 +367,7 @@ class TransferEngine:
             if not self._config.transfer.loopback_mode:
                 self._ensure_bridge_running(tx_only=True)
                 bridge_started_here = self._bridge_tx_only and self._bridge is not None
+                self._begin_tx_spectrum()
 
             data = file_path.read_bytes()
             file_hash = hashlib.sha256(data).hexdigest()
@@ -388,6 +468,8 @@ class TransferEngine:
         finally:
             self._abort.clear()
             self._tx_file_path = None
+            if not self._config.transfer.loopback_mode:
+                self._end_tx_spectrum()
             if bridge_started_here:
                 self._maybe_stop_bridge()
 
@@ -399,6 +481,7 @@ class TransferEngine:
             if not self._config.transfer.loopback_mode:
                 self._ensure_bridge_running(tx_only=True)
                 bridge_started_here = self._bridge_tx_only and self._bridge is not None
+                self._begin_tx_spectrum()
                 self._radio.ptt_on()
 
             loopback_buffer: list[np.ndarray] = []
@@ -431,6 +514,8 @@ class TransferEngine:
             self._set_state(SessionState.IDLE)
         finally:
             self._abort.clear()
+            if not self._config.transfer.loopback_mode:
+                self._end_tx_spectrum()
             if bridge_started_here:
                 self._maybe_stop_bridge()
 
@@ -452,6 +537,15 @@ class TransferEngine:
         rate = self._tx_modem.modem_sample_rate
         return np.zeros(max(rate // 20, 1), dtype=np.int16)
 
+    def _encode_tune_chunk(self, duration_ms: int = 150) -> np.ndarray:
+        burst = self._encode_tune_burst()
+        if len(burst) == 0:
+            return burst
+        rate = self._tx_modem.modem_sample_rate
+        samples_needed = max(len(burst), int(rate * duration_ms / 1000))
+        reps = (samples_needed + len(burst) - 1) // len(burst)
+        return np.tile(burst, reps)[:samples_needed].astype(np.int16)
+
     def _run_tune(self) -> None:
         bridge_started_here = False
         try:
@@ -460,6 +554,7 @@ class TransferEngine:
             if not self._bridge:
                 raise RuntimeError("Audio bridge unavailable — check audio devices in Settings")
 
+            self._begin_tx_spectrum()
             self._radio.ptt_on()
             self._set_state(SessionState.TUNING)
             emission = self._config.transfer.radio_emission.upper()
@@ -471,11 +566,11 @@ class TransferEngine:
             )
             deadline = time.monotonic() + self._config.transfer.tune_max_seconds
             while not self._abort.is_set() and time.monotonic() < deadline:
-                audio = self._encode_tune_burst()
+                audio = self._encode_tune_chunk()
                 self._feed_spectrum(audio)
                 if self._bridge and not self._abort.is_set():
                     self._bridge.queue_tx(audio)
-                time.sleep(0.002)
+                time.sleep(0.05)
 
             if self._bridge:
                 self._bridge.drain_tx()
@@ -495,6 +590,7 @@ class TransferEngine:
                 self._radio.ptt_off()
             except Exception:
                 pass
+            self._end_tx_spectrum()
             if bridge_started_here:
                 self._maybe_stop_bridge()
             else:
@@ -515,8 +611,11 @@ class TransferEngine:
         if self._state != SessionState.TUNING:
             return
         self._abort.set()
+        self._halt_tx_audio()
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=5.0)
+        if self._state == SessionState.TUNING:
+            self._set_state(SessionState.IDLE)
 
     def start_waterfall_tx(self, message: str) -> None:
         if self._state != SessionState.IDLE:
@@ -549,13 +648,18 @@ class TransferEngine:
         was_tuning = self._state == SessionState.TUNING
         self._abort.set()
         self._rx_listening = False
-        if was_tuning and self._worker and self._worker.is_alive():
-            self._worker.join(timeout=5.0)
+        if was_tuning:
+            self._halt_tx_audio()
+            if self._worker and self._worker.is_alive():
+                self._worker.join(timeout=5.0)
             self._abort.clear()
+            self._end_tx_spectrum()
+            self._event_bus.publish(LogEvent(level="warning", message="Tune aborted"))
             self._set_state(SessionState.IDLE)
             self._resume_audio_monitor_if_on_air()
             return
         if self._bridge:
+            self._bridge.cancel_tx()
             self._bridge.stop()
         self._bridge_tx_only = False
         if not self._config.transfer.loopback_mode:
@@ -565,4 +669,7 @@ class TransferEngine:
                 pass
         self._event_bus.publish(LogEvent(level="warning", message="Transfer aborted"))
         self._set_state(SessionState.IDLE)
-        self._resume_audio_monitor_if_on_air()
+        if self._config.transfer.auto_rx and not self._config.transfer.loopback_mode:
+            self.start_auto_rx()
+        else:
+            self._resume_audio_monitor_if_on_air()

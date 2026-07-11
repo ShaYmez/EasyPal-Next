@@ -26,6 +26,12 @@ def get_primary_lan_ip() -> str | None:
     return None
 
 
+def preferred_gallery_url(port: int) -> str:
+    """Return LAN gallery URL when available, otherwise localhost."""
+    local, lan = gallery_urls(port)
+    return lan or local
+
+
 def gallery_urls(port: int) -> tuple[str, str | None]:
     """Return (localhost_url, lan_url_or_none)."""
     local = f"http://localhost:{port}"
