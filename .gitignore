@@ -27,6 +27,11 @@ packaging/windows/redist/_pkgs/
 # Native redistributables (download at build time)
 packaging/windows/redist/*.dll
 
+# Native HamDRM build tooling (large local deps / build trees)
+native/deps/
+native/hamdrm-dll/build*/
+native/hamdrm-dll/build-*/
+
 # User / runtime data
 gallery/
 logs/

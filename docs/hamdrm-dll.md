@@ -25,10 +25,16 @@ Probe with:
 
 ## Path to real EasyPal interop
 
-Pick one:
+1. **64-bit HamDRM DLL (in progress)** — vendored sources under `native/hamdrm-dll/` (from [DazDSP/hamdrm-dll](https://github.com/DazDSP/hamdrm-dll)), built as x64 with FFTW3 + FFTW2 shim:
 
-1. **64-bit HamDRM DLL** — build [DazDSP/hamdrm-dll](https://github.com/DazDSP/hamdrm-dll) as x64 and place at `%APPDATA%\EasyPal-Next\hamdrm.dll` or set path in Settings
+   ```bash
+   scripts/build-hamdrm-x64.sh
+   ```
+
+   Place the resulting `hamdrm.dll` and `libfftw3-3.dll` in `%APPDATA%\EasyPal-Next\` or `packaging/windows/redist/`.
+
 2. **32-bit bridge process** — small helper EXE that loads `run.dll` and speaks JSON-RPC over a pipe to 64-bit EasyPal-Next (planned follow-up)
+
 3. **32-bit Python build of EasyPal-Next** — not preferred
 
-Until then, FreeDV/EPNX remains the working on-air engine for Next↔Next transfers.
+Until a loadable 64-bit DLL is installed, FreeDV/EPNX remains the working on-air engine for Next↔Next transfers.
