@@ -95,6 +95,51 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         form = QFormLayout(widget)
 
+        self._engine = QComboBox()
+        self._engine.addItem("HamDRM (original EasyPal compatible)", "hamdrm")
+        self._engine.addItem("FreeDV DATAC3 (experimental)", "freedv")
+        eng_idx = self._engine.findData(cfg.modem.engine)
+        if eng_idx >= 0:
+            self._engine.setCurrentIndex(eng_idx)
+        self._engine.setToolTip(
+            "HamDRM uses EasyPal's run.dll / hamdrm.dll. Requires a 64-bit DLL "
+            "(or future 32-bit bridge). Falls back to FreeDV if unavailable."
+        )
+
+        self._hamdrm_dll = QLineEdit(cfg.modem.hamdrm_dll_path or "")
+        self._hamdrm_dll.setPlaceholderText(r"C:\Program Files\EasyPal\run.dll")
+        dll_row = QHBoxLayout()
+        dll_row.addWidget(self._hamdrm_dll)
+        dll_browse = QPushButton("Browse…")
+        dll_browse.clicked.connect(self._browse_hamdrm_dll)
+        dll_row.addWidget(dll_browse)
+
+        self._hamdrm_mode = QComboBox()
+        for mode in ("A", "B", "E"):
+            self._hamdrm_mode.addItem(f"Mode {mode}", mode)
+        mode_idx = self._hamdrm_mode.findData(cfg.modem.hamdrm_mode)
+        if mode_idx >= 0:
+            self._hamdrm_mode.setCurrentIndex(mode_idx)
+
+        self._hamdrm_qam = QComboBox()
+        for qam in (4, 16, 64):
+            self._hamdrm_qam.addItem(f"QAM {qam}", qam)
+        qam_idx = self._hamdrm_qam.findData(cfg.modem.hamdrm_qam)
+        if qam_idx >= 0:
+            self._hamdrm_qam.setCurrentIndex(qam_idx)
+
+        self._hamdrm_leadin = QSpinBox()
+        self._hamdrm_leadin.setRange(1, 64)
+        self._hamdrm_leadin.setValue(cfg.modem.hamdrm_start_delay)
+        self._hamdrm_leadin.setToolTip("DRM lead-in / start delay (original default ~24)")
+
+        form.addRow(QLabel("<b>Transfer engine</b>"))
+        form.addRow("Engine:", self._engine)
+        form.addRow("HamDRM DLL:", dll_row)
+        form.addRow("DRM mode:", self._hamdrm_mode)
+        form.addRow("QAM:", self._hamdrm_qam)
+        form.addRow("Lead-in:", self._hamdrm_leadin)
+
         self._pace_ms = QSpinBox()
         self._pace_ms.setRange(0, 100)
         self._pace_ms.setSuffix(" ms")
@@ -141,10 +186,11 @@ class SettingsDialog(QDialog):
             "Guides Tune hints on the waterfall. RF mode is set on the radio; DATAC3 modem is unchanged."
         )
 
-        self._auto_rx = QCheckBox("Auto RX — listen for incoming transfers (on-air)")
+        self._auto_rx = QCheckBox("Always-on Auto RX (recommended — like original EasyPal)")
         self._auto_rx.setChecked(cfg.transfer.auto_rx)
         self._auto_rx.setToolTip(
-            "Keeps the modem listening and starts receiving when a FILE_META packet is detected."
+            "When enabled in on-air mode, listen continuously so pictures arrive "
+            "automatically without clicking Receive."
         )
 
         form.addRow("Burst pace:", self._pace_ms)
@@ -421,6 +467,16 @@ class SettingsDialog(QDialog):
         form.addRow(QLabel("Yellow section titles are kept in both themes."))
         return widget
 
+    def _browse_hamdrm_dll(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select HamDRM DLL (run.dll or hamdrm.dll)",
+            self._hamdrm_dll.text() or r"C:\Program Files\EasyPal",
+            "DLL (*.dll);;All files (*.*)",
+        )
+        if path:
+            self._hamdrm_dll.setText(path)
+
     def _browse_dir(self, field: QLineEdit) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select directory", field.text())
         if path:
@@ -476,6 +532,12 @@ class SettingsDialog(QDialog):
         config.transfer.tune_max_seconds = self._tune_max_seconds.value()
         config.transfer.radio_emission = self._radio_emission.currentData() or "fm"
         config.transfer.auto_rx = self._auto_rx.isChecked()
+        config.modem.engine = self._engine.currentData() or "hamdrm"
+        dll_path = self._hamdrm_dll.text().strip()
+        config.modem.hamdrm_dll_path = dll_path or None
+        config.modem.hamdrm_mode = self._hamdrm_mode.currentData() or "B"
+        config.modem.hamdrm_qam = int(self._hamdrm_qam.currentData() or 16)
+        config.modem.hamdrm_start_delay = self._hamdrm_leadin.value()
         config.fec.chunk_size = int(
             self._fec_chunk.currentData() or self._fec_chunk.currentText()
         )

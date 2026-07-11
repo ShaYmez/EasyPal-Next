@@ -157,10 +157,17 @@ class MainWindow(QMainWindow):
         if not context.config.transfer.loopback_mode:
             try:
                 context.transfer_engine.start_audio_monitor()
+                # Always-on RX like original EasyPal when Auto RX is enabled (default).
                 if context.config.transfer.auto_rx:
-                    context.transfer_engine.start_auto_rx()
+                    context.transfer_backend.start_always_on_rx()
+                    self._actions.auto_rx.setChecked(True)
             except Exception as exc:
-                self.statusBar().showMessage(f"Audio monitor failed: {exc}", 8000)
+                self.statusBar().showMessage(f"Audio monitor / Auto RX failed: {exc}", 8000)
+            if context.hamdrm_fell_back and context.hamdrm_unavailable_reason:
+                self.statusBar().showMessage(
+                    f"HamDRM unavailable — using FreeDV. {context.hamdrm_unavailable_reason}",
+                    12000,
+                )
 
         self._fit_to_screen()
 
@@ -207,7 +214,7 @@ class MainWindow(QMainWindow):
             self._actions.auto_rx.setToolTip("Auto RX requires on-air mode")
         else:
             self._actions.auto_rx.setToolTip(
-                "Keep listening for incoming transfers (DATAC3 FILE_META trigger)"
+                "Always-on RX — listen continuously like original EasyPal (pictures arrive automatically)"
             )
 
     def _on_live_waterfall_toggled(self, checked: bool) -> None:
@@ -228,12 +235,16 @@ class MainWindow(QMainWindow):
         save_config(self._context.config)
         if checked:
             try:
-                self._context.transfer_engine.start_auto_rx()
+                self._context.transfer_backend.start_always_on_rx()
             except Exception as exc:
                 self._actions.auto_rx.setChecked(False)
                 QMessageBox.critical(self, "Auto RX", str(exc))
-        elif self._context.transfer_engine.state == SessionState.RX_LISTEN:
-            self._context.transfer_engine.abort()
+        else:
+            try:
+                self._context.transfer_backend.stop_rx()
+            except Exception:
+                if self._context.transfer_engine.state == SessionState.RX_LISTEN:
+                    self._context.transfer_engine.abort()
 
     def _update_tune_action_state(self) -> None:
         loopback = self._context.config.transfer.loopback_mode
@@ -301,8 +312,18 @@ class MainWindow(QMainWindow):
         cfg = self._context.config
         mode = "loopback" if cfg.transfer.loopback_mode else "on-air"
         state = self._context.transfer_engine.state.value
+        engine = getattr(self._context.transfer_backend, "engine_name", cfg.modem.engine)
+        if self._context.hamdrm_fell_back:
+            engine = f"{engine} (HamDRM fallback)"
+        listen = " · listening" if (
+            not cfg.transfer.loopback_mode
+            and cfg.transfer.auto_rx
+            and state in ("idle", "rx_listen", "rx_assembling")
+        ) else ""
         file_part = f" · {self._selected_file.name}" if self._selected_file else ""
-        self._status_main.setText(f"{cfg.callsign} · {cfg.modem.mode} · {mode} · {state}{file_part}")
+        self._status_main.setText(
+            f"{cfg.callsign} · {engine} · {cfg.modem.mode} · {mode} · {state}{listen}{file_part}"
+        )
 
     def _persist_waterfall_config(self) -> None:
         self._wftxt.apply_to_config(self._context.config.waterfall)
@@ -360,7 +381,7 @@ class MainWindow(QMainWindow):
             self._actions.auto_rx.setChecked(config.transfer.auto_rx)
             self._sync_auto_rx_action_state()
             if config.transfer.auto_rx and not config.transfer.loopback_mode:
-                self._context.transfer_engine.start_auto_rx()
+                self._context.transfer_backend.start_always_on_rx()
             self._update_tune_action_state()
             if config.ui.theme != self._context.config.ui.theme:
                 self._set_theme(config.ui.theme)
@@ -368,7 +389,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Settings",
-                "Settings saved. Restart for loopback/on-air and path changes.",
+                "Settings saved. Restart for engine, loopback/on-air, and path changes.",
             )
 
     def _load_pic(self) -> None:
@@ -413,16 +434,31 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Send WFTxt", str(exc))
 
     def _receive(self) -> None:
-        if self._context.transfer_engine.state != SessionState.IDLE:
+        if self._context.config.transfer.loopback_mode:
+            QMessageBox.warning(
+                self,
+                "Receive",
+                "Receive / always-on RX requires on-air mode. Disable loopback in Settings.",
+            )
+            return
+        if self._context.transfer_engine.state not in (SessionState.IDLE, SessionState.RX_LISTEN):
             QMessageBox.warning(self, "Receive", "Transfer already in progress.")
             return
         try:
-            self._context.transfer_engine.start_rx(self._context.gallery.received_dir())
+            self._context.config.transfer.auto_rx = True
+            save_config(self._context.config)
+            self._actions.auto_rx.setChecked(True)
+            self._context.transfer_backend.start_always_on_rx()
+            self.statusBar().showMessage("Listening for incoming transfers…", 5000)
+            self._update_status_text()
         except Exception as exc:
             QMessageBox.critical(self, "Receive", str(exc))
 
     def _abort(self) -> None:
-        self._context.transfer_engine.abort()
+        try:
+            self._context.transfer_backend.abort()
+        except Exception:
+            self._context.transfer_engine.abort()
 
     def _show_about(self) -> None:
         logo = brand_logo_path()

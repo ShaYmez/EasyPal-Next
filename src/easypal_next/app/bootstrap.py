@@ -12,7 +12,8 @@ from easypal_next.config.loader import load_config
 from easypal_next.config.schema import AppConfig
 from easypal_next.core.events import EventBus, SpectrumEvent
 from easypal_next.core.transfer_engine import TransferEngine
-from easypal_next.modem.factory import create_modem
+from easypal_next.modem.factory import create_modem, create_transfer_backend_selection
+from easypal_next.modem.transfer_backend import TransferBackend
 from easypal_next.network.gallery_store import GalleryStore
 from easypal_next.network.server import NetworkServer
 from easypal_next.radio.factory import create_radio_controller
@@ -53,6 +54,15 @@ class AppContext:
             self.gallery,
             self.modem_bridge,
         )
+        selection = create_transfer_backend_selection(
+            config,
+            self.event_bus,
+            self.gallery,
+            self.transfer_engine,
+        )
+        self.transfer_backend: TransferBackend = selection.backend
+        self.hamdrm_fell_back = selection.hamdrm_fell_back
+        self.hamdrm_unavailable_reason = selection.hamdrm_unavailable_reason
         self.network_server = NetworkServer(
             config.network,
             self.event_bus,

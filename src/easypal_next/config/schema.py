@@ -50,6 +50,17 @@ class ModemConfig(BaseModel):
     fsk_Rs: int = 100
     fsk_Fs: int = 8000
     ldpc_codename: str = "H_256_512_4"
+    """Transfer modem stack: HamDRM (EasyPal run.dll) or FreeDV (libcodec2)."""
+    engine: Literal["hamdrm", "freedv"] = "hamdrm"
+    hamdrm_dll_path: str | None = None
+    hamdrm_mode: Literal["A", "B", "E"] = "B"
+    hamdrm_specocc: Literal["2.3", "2.5"] = "2.5"
+    hamdrm_mscprot: Literal["normal", "low"] = "normal"
+    hamdrm_qam: Literal[4, 16, 64] = 16
+    hamdrm_interleave: Literal["short", "long"] = "short"
+    hamdrm_dc_freq: int = 350
+    """Lead-in / start delay symbols (EasyPal default profile uses 24)."""
+    hamdrm_start_delay: int = 24
 
 
 class FecConfig(BaseModel):
@@ -67,7 +78,7 @@ class TransferConfig(BaseModel):
     """Radio emission mode — guides Tune hints (FM, AM, or SSB/USB)."""
     radio_emission: Literal["fm", "am", "ssb"] = "fm"
     """When on-air, keep listening and accept incoming transfers automatically."""
-    auto_rx: bool = False
+    auto_rx: bool = True
 
 
 class WaterfallConfig(BaseModel):

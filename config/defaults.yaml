@@ -14,6 +14,15 @@ modem:
   fsk_Rs: 100
   fsk_Fs: 8000
   ldpc_codename: "H_256_512_4"
+  engine: hamdrm
+  hamdrm_dll_path: null
+  hamdrm_mode: B
+  hamdrm_specocc: "2.5"
+  hamdrm_mscprot: normal
+  hamdrm_qam: 16
+  hamdrm_interleave: short
+  hamdrm_dc_freq: 350
+  hamdrm_start_delay: 24
 
 radio:
   profile: "vox"
@@ -25,7 +34,7 @@ transfer:
   pace_ms: 0
   tune_max_seconds: 30
   radio_emission: fm
-  auto_rx: false
+  auto_rx: true
 
 fec:
   k: 16
