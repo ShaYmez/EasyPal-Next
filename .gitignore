@@ -20,6 +20,8 @@ env/
 # PyInstaller / packaging
 packaging/windows/dist/
 packaging/windows/build/
+packaging/windows/output/
+packaging/windows/redist/_pkgs/
 *.spec.bak
 
 # Native redistributables (download at build time)
@@ -39,6 +41,8 @@ Desktop.ini
 .pytest_cache/
 .coverage
 htmlcov/
+loopback.txt
+t.bin
 
 # Secrets
 .env
