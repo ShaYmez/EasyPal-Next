@@ -138,8 +138,11 @@ class MainWindow(QMainWindow):
         self._sync_theme_checks()
         self._actions.waterfall_tx_on_file.setChecked(context.config.waterfall.enabled)
         self._waterfall.set_session_context(
-            SessionState.IDLE, context.config.transfer.loopback_mode
+            SessionState.IDLE,
+            context.config.transfer.loopback_mode,
+            context.config.transfer.radio_emission,
         )
+        self._update_tune_action_state()
         self._update_status_text()
 
         context.event_bus.subscribe(SessionStateChangedEvent, self._on_state_changed)
@@ -174,6 +177,7 @@ class MainWindow(QMainWindow):
         a.exit_app.triggered.connect(self.close)
         a.transmit.triggered.connect(self._transmit)
         a.receive.triggered.connect(self._receive)
+        a.tune.triggered.connect(self._toggle_tune)
         a.abort.triggered.connect(self._abort)
         a.send_wftxt.triggered.connect(self._send_wftxt)
         a.waterfall_tx_on_file.toggled.connect(self._on_waterfall_toggled)
@@ -184,6 +188,43 @@ class MainWindow(QMainWindow):
         )
         a.about.triggered.connect(self._show_about)
         self._wftxt.send_requested.connect(self._send_wftxt)
+
+    def _update_tune_action_state(self) -> None:
+        loopback = self._context.config.transfer.loopback_mode
+        state = self._context.transfer_engine.state
+        tuning = state == SessionState.TUNING
+        self._actions.tune.setEnabled(
+            not loopback and state in (SessionState.IDLE, SessionState.TUNING)
+        )
+        self._actions.tune.setChecked(tuning)
+        emission = self._context.config.transfer.radio_emission.upper()
+        if loopback:
+            tip = "Tune requires on-air mode — disable loopback in Settings"
+        else:
+            tip = f"F8 — loop modem preamble on-air ({emission}) to align audio levels"
+        self._actions.tune.setToolTip(tip)
+
+    def _toggle_tune(self, checked: bool) -> None:
+        if self._context.config.transfer.loopback_mode:
+            self._actions.tune.setChecked(False)
+            QMessageBox.warning(
+                self,
+                "Tune",
+                "Tune is only available in on-air mode. Disable loopback in Settings and restart.",
+            )
+            return
+        state = self._context.transfer_engine.state
+        if checked:
+            if state != SessionState.IDLE:
+                self._actions.tune.setChecked(False)
+                return
+            try:
+                self._context.transfer_engine.start_tune()
+            except Exception as exc:
+                self._actions.tune.setChecked(False)
+                QMessageBox.critical(self, "Tune", str(exc))
+        elif state == SessionState.TUNING:
+            self._context.transfer_engine.stop_tune()
 
     def _fit_to_screen(self) -> None:
         screen = QApplication.primaryScreen()
@@ -231,6 +272,7 @@ class MainWindow(QMainWindow):
             self._wftxt.sync_from_config(config.waterfall)
             self._waterfall.update_config(config.waterfall)
             self._actions.waterfall_tx_on_file.setChecked(config.waterfall.enabled)
+            self._update_tune_action_state()
             if config.ui.theme != self._context.config.ui.theme:
                 self._set_theme(config.ui.theme)
             self._update_status_text()
@@ -306,10 +348,16 @@ class MainWindow(QMainWindow):
 
     def _on_state_changed(self, event: SessionStateChangedEvent) -> None:
         self._waterfall.set_session_context(
-            event.state, self._context.config.transfer.loopback_mode
+            event.state,
+            self._context.config.transfer.loopback_mode,
+            self._context.config.transfer.radio_emission,
         )
         if event.state == SessionState.IDLE:
             self._wftxt.set_transmitting(False)
+            self._waterfall.reset_live()
+        elif event.state == SessionState.TUNING:
+            self._waterfall.reset_live()
+        self._update_tune_action_state()
         self._update_status_text()
         self.statusBar().showMessage(f"State → {event.state.value}", 4000)
 

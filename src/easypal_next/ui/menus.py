@@ -17,6 +17,7 @@ class MainActions:
     transmit: QAction
     receive: QAction
     abort: QAction
+    tune: QAction
     send_wftxt: QAction
     waterfall_tx_on_file: QAction
     theme_light: QAction
@@ -33,6 +34,7 @@ def build_menus(window: QMainWindow, gallery_url: str) -> MainActions:
         transmit=QAction("&Transmit", window),
         receive=QAction("&Receive", window),
         abort=QAction("&Abort", window),
+        tune=QAction("&Tune", window),
         send_wftxt=QAction("Send &WFTxt", window),
         waterfall_tx_on_file=QAction("Waterfall TX on &file", window),
         theme_light=QAction("&Light theme", window),
@@ -47,6 +49,8 @@ def build_menus(window: QMainWindow, gallery_url: str) -> MainActions:
     actions.transmit.setShortcut(QKeySequence("F5"))
     actions.receive.setShortcut(QKeySequence("F6"))
     actions.abort.setShortcut(QKeySequence("Esc"))
+    actions.tune.setShortcut(QKeySequence("F8"))
+    actions.tune.setCheckable(True)
     actions.send_wftxt.setShortcut(QKeySequence("F7"))
     actions.waterfall_tx_on_file.setCheckable(True)
     actions.theme_light.setCheckable(True)
@@ -61,6 +65,7 @@ def build_menus(window: QMainWindow, gallery_url: str) -> MainActions:
     transfer_menu = window.menuBar().addMenu("&Transfer")
     transfer_menu.addAction(actions.transmit)
     transfer_menu.addAction(actions.receive)
+    transfer_menu.addAction(actions.tune)
     transfer_menu.addAction(actions.abort)
 
     waterfall_menu = window.menuBar().addMenu("&Waterfall")
@@ -89,5 +94,6 @@ def build_toolbar(window: QMainWindow, actions: MainActions) -> QToolBar:
     toolbar.addAction(actions.load_pic)
     toolbar.addAction(actions.transmit)
     toolbar.addAction(actions.receive)
+    toolbar.addAction(actions.tune)
     toolbar.addAction(actions.abort)
     return toolbar

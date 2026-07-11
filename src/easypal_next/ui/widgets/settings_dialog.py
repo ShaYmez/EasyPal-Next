@@ -119,9 +119,33 @@ class SettingsDialog(QDialog):
         self._fec_preset.addItem("Fastest — large chunks, pace 0", "fastest")
         self._fec_preset.currentIndexChanged.connect(self._apply_fec_preset)
 
+        self._tune_max_seconds = QSpinBox()
+        self._tune_max_seconds.setRange(5, 120)
+        self._tune_max_seconds.setSuffix(" s")
+        self._tune_max_seconds.setValue(cfg.transfer.tune_max_seconds)
+        self._tune_max_seconds.setToolTip(
+            "Maximum duration for on-air Tune (modem preamble loop). Press F8 or Tune again to stop early."
+        )
+
+        self._radio_emission = QComboBox()
+        for label, value in (
+            ("FM (SignaLink / data VOX)", "fm"),
+            ("AM (low drive)", "am"),
+            ("SSB / USB (HF voice)", "ssb"),
+        ):
+            self._radio_emission.addItem(label, value)
+        idx_em = self._radio_emission.findData(cfg.transfer.radio_emission)
+        if idx_em >= 0:
+            self._radio_emission.setCurrentIndex(idx_em)
+        self._radio_emission.setToolTip(
+            "Guides Tune hints on the waterfall. RF mode is set on the radio; DATAC3 modem is unchanged."
+        )
+
         form.addRow("Burst pace:", self._pace_ms)
         form.addRow("FEC chunk size:", self._fec_chunk)
         form.addRow("Speed preset:", self._fec_preset)
+        form.addRow("Tune timeout:", self._tune_max_seconds)
+        form.addRow("Radio emission:", self._radio_emission)
         form.addRow(
             QLabel(
                 "Tips: set pace to 0, use 4096-byte chunks, and disable "
@@ -380,6 +404,8 @@ class SettingsDialog(QDialog):
         config.callsign = self._callsign.text().strip() or "N0CALL"
         config.transfer.loopback_mode = self._loopback.isChecked()
         config.transfer.pace_ms = self._pace_ms.value()
+        config.transfer.tune_max_seconds = self._tune_max_seconds.value()
+        config.transfer.radio_emission = self._radio_emission.currentData() or "fm"
         config.fec.chunk_size = int(
             self._fec_chunk.currentData() or self._fec_chunk.currentText()
         )

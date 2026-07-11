@@ -395,6 +395,76 @@ class TransferEngine:
         self._worker = threading.Thread(target=self._run_tx, args=(file_path,), daemon=True)
         self._worker.start()
 
+    def _encode_tune_burst(self) -> np.ndarray:
+        if hasattr(self._tx_modem, "encode_preamble"):
+            return self._tx_modem.encode_preamble()
+        rate = self._tx_modem.modem_sample_rate
+        return np.zeros(max(rate // 20, 1), dtype=np.int16)
+
+    def _run_tune(self) -> None:
+        bridge_started_here = False
+        try:
+            self._ensure_bridge_running(tx_only=True)
+            bridge_started_here = self._bridge_tx_only and self._bridge is not None
+            if not self._bridge:
+                raise RuntimeError("Audio bridge unavailable — check audio devices in Settings")
+
+            self._radio.ptt_on()
+            self._set_state(SessionState.TUNING)
+            emission = self._config.transfer.radio_emission.upper()
+            self._event_bus.publish(
+                LogEvent(
+                    level="info",
+                    message=f"Tune started ({emission}) — adjust drive/VOX; watch waterfall",
+                )
+            )
+            deadline = time.monotonic() + self._config.transfer.tune_max_seconds
+            while not self._abort.is_set() and time.monotonic() < deadline:
+                audio = self._encode_tune_burst()
+                self._feed_spectrum(audio)
+                if self._bridge and not self._abort.is_set():
+                    self._bridge.queue_tx(audio)
+                time.sleep(0.002)
+
+            if self._bridge:
+                self._bridge.drain_tx()
+            self._radio.ptt_off()
+            if self._abort.is_set():
+                self._event_bus.publish(LogEvent(level="warning", message="Tune aborted"))
+            else:
+                self._event_bus.publish(LogEvent(level="info", message="Tune finished"))
+            self._set_state(SessionState.IDLE)
+        except Exception as exc:
+            self._event_bus.publish(LogEvent(level="error", message=f"Tune failed: {exc}"))
+            self._set_state(SessionState.ERROR)
+            self._set_state(SessionState.IDLE)
+        finally:
+            self._abort.clear()
+            try:
+                self._radio.ptt_off()
+            except Exception:
+                pass
+            if bridge_started_here:
+                self._maybe_stop_bridge()
+
+    def start_tune(self) -> None:
+        if self._config.transfer.loopback_mode:
+            raise RuntimeError("Tune requires on-air mode — disable loopback in Settings")
+        if self._state != SessionState.IDLE:
+            raise RuntimeError(f"Cannot start Tune from state {self._state}")
+        self.initialize()
+        self._abort.clear()
+        self._event_bus.publish(LogEvent(level="info", message="Tune armed"))
+        self._worker = threading.Thread(target=self._run_tune, daemon=True)
+        self._worker.start()
+
+    def stop_tune(self) -> None:
+        if self._state != SessionState.TUNING:
+            return
+        self._abort.set()
+        if self._worker and self._worker.is_alive():
+            self._worker.join(timeout=5.0)
+
     def start_waterfall_tx(self, message: str) -> None:
         if self._state != SessionState.IDLE:
             raise RuntimeError(f"Cannot start waterfall TX from state {self._state}")
@@ -423,8 +493,13 @@ class TransferEngine:
         self._set_state(SessionState.RX_LISTEN)
 
     def abort(self) -> None:
+        was_tuning = self._state == SessionState.TUNING
         self._abort.set()
         self._rx_listening = False
+        if was_tuning and self._worker and self._worker.is_alive():
+            self._worker.join(timeout=5.0)
+            self._abort.clear()
+            return
         if self._bridge:
             self._bridge.stop()
         self._bridge_tx_only = False

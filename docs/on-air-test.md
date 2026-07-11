@@ -16,6 +16,8 @@ Use **Settings** in the app (General, Audio, Radio, Waterfall tabs) or edit `%AP
 ```yaml
 transfer:
   loopback_mode: false
+  tune_max_seconds: 30
+  radio_emission: fm   # fm | am | ssb — Tune waterfall hints only
 
 audio:
   input_device: <mic/input index>
@@ -44,6 +46,21 @@ waterfall:
 
 Set your callsign in **General** or config. Restart the app after changing loopback mode or gallery/received paths.
 
+## Tune (audio alignment)
+
+Before your first on-air transfer, use **Transfer → Tune** (toolbar **Tune**, **F8**) to loop the modem preamble through the sound card while PTT is active. The waterfall shows live spectrum so you can set drive, VOX threshold, or MIC gain without sending a file.
+
+1. Set **Settings → General → Loopback mode** off; restart if you changed it.
+2. **Settings → Transfer → Radio emission** to match how you operate:
+   - **FM** — SignaLink / data VOX; typical VHF/UHF FM data
+   - **AM** — low drive; avoid over-modulation on the carrier
+   - **SSB / USB** — HF voice-style: USB, ~2.4 kHz filter, no compression
+3. Set RF frequency and mode on the radio manually (EasyPal does not CAT-tune the dial in v1).
+4. Press **Tune** (or **F8**). PTT keys; preamble audio loops until timeout (**Tune timeout**, default 30 s) or you press **Tune** again / **Abort**.
+5. Adjust levels until the waterfall shows a clean DATAC3 tone band without clipping.
+
+Tune is disabled in loopback mode (no sound card / PTT path).
+
 ## Two-Station Test (recommended)
 
 1. **Station A (TX):** LoadPic → select a small JPEG (~50 KB) → Transmit
@@ -71,6 +88,8 @@ Set your callsign in **General** or config. Restart the app after changing loopb
 - [ ] Waterfall header visible on spectrum (if enabled)
 - [ ] Live waterfall scrolls during loopback TX (Settings → Waterfall → tx_monitor)
 - [ ] Send WFTxt toolbar sends text-only waterfall (no file)
+- [ ] Tune (F8) loops preamble on-air; waterfall scrolls; auto-stops at timeout
+- [ ] FM / AM / SSB emission setting matches your radio mode (Tune hints)
 - [ ] PTT activates before audio (on-air mode)
 - [ ] RX and TX entries show direction badges in gallery (desktop + LAN)
 - [ ] SHA256 verified on received file

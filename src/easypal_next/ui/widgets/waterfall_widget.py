@@ -33,6 +33,7 @@ class WaterfallWidget(QWidget):
         self._config = config
         self._session_state = SessionState.IDLE
         self._loopback = True
+        self._radio_emission = "fm"
         self._active = False
         self._waterfall_image: QImage | None = None
 
@@ -56,20 +57,44 @@ class WaterfallWidget(QWidget):
         self._bridge = _SpectrumBridge(event_bus)
         self._bridge.spectrum_received.connect(self._append_spectrum)
 
+    def reset_live(self) -> None:
+        """Clear scrolled spectrum and show idle / session hint text."""
+        self._active = False
+        self._waterfall_image = None
+        self._update_idle_text()
+
     def update_config(self, config: WaterfallConfig) -> None:
         self._config = config
         self._band_label.setText(
             f"{config.freq_min_hz}–{config.freq_max_hz} Hz · live spectrum"
         )
 
-    def set_session_context(self, state: SessionState, loopback: bool) -> None:
+    def set_session_context(
+        self,
+        state: SessionState,
+        loopback: bool,
+        radio_emission: str = "fm",
+    ) -> None:
         self._session_state = state
         self._loopback = loopback
+        self._radio_emission = radio_emission
         if not self._active:
             self._update_idle_text()
 
+    def _tuning_hint(self, emission: str) -> str:
+        mode = emission.lower()
+        if mode == "fm":
+            return "Tuning (FM) — set SignaLink drive / VOX; watch waterfall for clean tone"
+        if mode == "am":
+            return "Tuning (AM) — use low drive; avoid over-modulation on carrier"
+        if mode == "ssb":
+            return "Tuning (USB) — 2.4 kHz filter; no compression; adjust MIC gain"
+        return "Tuning — adjust audio drive / VOX; watch waterfall"
+
     def _update_idle_text(self) -> None:
-        if self._session_state == SessionState.RX_LISTEN:
+        if self._session_state == SessionState.TUNING:
+            text = self._tuning_hint(self._radio_emission)
+        elif self._session_state == SessionState.RX_LISTEN:
             text = (
                 "Listening for signal…"
                 if not self._loopback

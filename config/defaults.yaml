@@ -23,6 +23,8 @@ radio:
 transfer:
   loopback_mode: true
   pace_ms: 0
+  tune_max_seconds: 30
+  radio_emission: fm
 
 fec:
   k: 16

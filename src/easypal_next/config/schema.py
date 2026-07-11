@@ -62,6 +62,10 @@ class TransferConfig(BaseModel):
     loopback_mode: bool = True
     """Milliseconds to wait after each modem burst (0 = fastest; use 5–20 on-air if needed)."""
     pace_ms: int = 0
+    """Max duration for on-air Tune (modem preamble loop)."""
+    tune_max_seconds: int = 30
+    """Radio emission mode — guides Tune hints (FM, AM, or SSB/USB)."""
+    radio_emission: Literal["fm", "am", "ssb"] = "fm"
 
 
 class WaterfallConfig(BaseModel):

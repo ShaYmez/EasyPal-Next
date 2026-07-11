@@ -16,4 +16,5 @@ class SessionState(str, Enum):
     RX_SYNC = "rx_sync"
     RX_ASSEMBLING = "rx_assembling"
     RX_DONE = "rx_done"
+    TUNING = "tuning"
     ERROR = "error"
