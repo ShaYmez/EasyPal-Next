@@ -296,7 +296,7 @@ class SettingsDialog(QDialog):
 
         self._wf_enabled = QCheckBox("Enable waterfall header/footer on file TX")
         self._wf_enabled.setChecked(cfg.waterfall.enabled)
-        self._wf_monitor = QCheckBox("Show live spectrum during TX (and loopback)")
+        self._wf_monitor = QCheckBox("Show live spectrum during TX (Tune always shows spectrum)")
         self._wf_monitor.setChecked(cfg.waterfall.tx_monitor)
         self._wf_begin = QLineEdit(cfg.waterfall.begin_message)
         self._wf_end = QLineEdit(cfg.waterfall.end_message)

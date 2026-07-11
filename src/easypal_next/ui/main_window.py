@@ -151,6 +151,12 @@ class MainWindow(QMainWindow):
         self._vm.progress_changed.connect(self._on_progress)
         self._vm.state_changed.connect(self._on_vm_state)
 
+        if not context.config.transfer.loopback_mode:
+            try:
+                context.transfer_engine.start_audio_monitor()
+            except Exception as exc:
+                self.statusBar().showMessage(f"Audio monitor failed: {exc}", 8000)
+
         self._fit_to_screen()
 
     def _gallery_button(self, label: str, url: str) -> QPushButton:
@@ -268,7 +274,11 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._context, self)
         if dialog.exec():
+            loopback_before = self._context.config.transfer.loopback_mode
             config = dialog.apply()
+            loopback_after = config.transfer.loopback_mode
+            if loopback_before != loopback_after or not loopback_after:
+                self._context.refresh_modem_bridge()
             self._wftxt.sync_from_config(config.waterfall)
             self._waterfall.update_config(config.waterfall)
             self._actions.waterfall_tx_on_file.setChecked(config.waterfall.enabled)

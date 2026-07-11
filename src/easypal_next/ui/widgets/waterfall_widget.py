@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, Slot
+import time
+
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
@@ -11,15 +13,15 @@ from easypal_next.core.events import EventBus, SpectrumEvent
 from easypal_next.core.session import SessionState
 
 
-class _SpectrumBridge(QWidget):
-    spectrum_received = Signal(list)
+class _SpectrumBridge(QObject):
+    spectrum_received = Signal(object, int)
 
     def __init__(self, event_bus: EventBus) -> None:
         super().__init__()
         event_bus.subscribe(SpectrumEvent, self._on_spectrum)
 
     def _on_spectrum(self, event: SpectrumEvent) -> None:
-        self.spectrum_received.emit(event.bins)
+        self.spectrum_received.emit(event.bins, event.sample_rate)
 
 
 class WaterfallWidget(QWidget):
@@ -36,6 +38,7 @@ class WaterfallWidget(QWidget):
         self._radio_emission = "fm"
         self._active = False
         self._waterfall_image: QImage | None = None
+        self._last_paint = 0.0
 
         self._band_label = QLabel(
             f"{config.freq_min_hz}–{config.freq_max_hz} Hz · live spectrum"
@@ -55,7 +58,10 @@ class WaterfallWidget(QWidget):
         layout.addWidget(self._label, stretch=1)
 
         self._bridge = _SpectrumBridge(event_bus)
-        self._bridge.spectrum_received.connect(self._append_spectrum)
+        self._bridge.spectrum_received.connect(
+            self._append_spectrum,
+            Qt.ConnectionType.QueuedConnection,
+        )
 
     def reset_live(self) -> None:
         """Clear scrolled spectrum and show idle / session hint text."""
@@ -103,9 +109,23 @@ class WaterfallWidget(QWidget):
         elif self._loopback:
             text = "Waterfall activates during transmit (loopback)"
         else:
-            text = "Waterfall — waiting for spectrum"
+            text = "Live input monitor — check audio input device if blank"
         self._label.setText(text)
         self._label.setPixmap(QPixmap())
+
+    def _slice_bins(self, bins: list[float], sample_rate: int) -> list[float]:
+        if not bins or sample_rate <= 0:
+            return bins
+        nyquist = sample_rate / 2
+        n = len(bins)
+        if n < 2 or nyquist <= 0:
+            return bins
+        bin_hz = nyquist / (n - 1)
+        i0 = max(0, int(self._config.freq_min_hz / bin_hz))
+        i1 = min(n - 1, int(self._config.freq_max_hz / bin_hz))
+        if i0 >= i1:
+            return bins
+        return bins[i0 : i1 + 1]
 
     def _level_to_color(self, level: float) -> QColor:
         level = max(0.0, min(1.0, level))
@@ -124,10 +144,16 @@ class WaterfallWidget(QWidget):
             return 0.0
         return (db - self._config.min_db) / span
 
-    @Slot(list)
-    def _append_spectrum(self, bins: list[float]) -> None:
+    @Slot(object, int)
+    def _append_spectrum(self, bins: list[float], sample_rate: int) -> None:
         if not bins:
             return
+        now = time.monotonic()
+        if now - self._last_paint < 0.05:
+            return
+        self._last_paint = now
+
+        bins = self._slice_bins(bins, sample_rate)
         self._active = True
         cols = len(bins)
         row = QImage(cols, 1, QImage.Format.Format_RGB32)

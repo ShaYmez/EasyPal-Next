@@ -15,8 +15,15 @@ class WaterfallTap:
         self._on_spectrum = on_spectrum
         self._buffer = np.zeros(fft_size, dtype=np.float32)
 
+    def _to_float(self, samples: np.ndarray) -> np.ndarray:
+        chunk = samples.astype(np.float32, copy=False)
+        peak = float(np.max(np.abs(chunk))) if len(chunk) else 0.0
+        if peak > 1.5:
+            chunk = chunk / 32768.0
+        return chunk
+
     def feed(self, samples: np.ndarray) -> None:
-        chunk = samples.astype(np.float32)
+        chunk = self._to_float(samples)
         if len(chunk) >= self._fft_size:
             window = chunk[-self._fft_size :]
         else:

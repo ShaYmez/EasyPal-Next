@@ -82,6 +82,37 @@ class TransferEngine:
     def state(self) -> SessionState:
         return self._state
 
+    def set_modem_bridge(self, bridge: ModemBridge | None) -> None:
+        if self._bridge and self._bridge.is_running:
+            self._bridge.stop()
+        self._bridge = bridge
+        self._bridge_tx_only = False
+
+    def start_audio_monitor(self) -> None:
+        """Open the sound card for live RX spectrum (on-air only)."""
+        if self._config.transfer.loopback_mode or not self._bridge:
+            return
+        if not self._initialized:
+            self.initialize()
+        else:
+            self._open_audio_devices()
+        self._bridge_tx_only = False
+        self._ensure_bridge_running()
+
+    def _resume_audio_monitor_if_on_air(self) -> None:
+        if self._config.transfer.loopback_mode or not self._bridge:
+            return
+        if self._rx_listening or self._state == SessionState.TUNING:
+            return
+        if self._state not in (
+            SessionState.IDLE,
+            SessionState.RX_DONE,
+            SessionState.TX_DONE,
+            SessionState.ERROR,
+        ):
+            return
+        self._ensure_bridge_running()
+
     def get_progress(self) -> TransferProgress:
         return self._progress
 
@@ -94,15 +125,21 @@ class TransferEngine:
         self._rx_modem.set_frame_rx_callback(self._on_modem_subframe)
         if not self._config.transfer.loopback_mode:
             self._radio.connect()
-            if self._bridge:
-                self._bridge._audio.open(  # noqa: SLF001
-                    self._config.audio.input_device,
-                    self._config.audio.output_device,
-                    self._config.audio.sample_rate,
-                    self._config.audio.block_size,
-                )
+            self._open_audio_devices()
         self._initialized = True
         self._event_bus.publish(LogEvent(level="info", message="Transfer engine initialized"))
+
+    def _open_audio_devices(self) -> None:
+        if not self._bridge:
+            return
+        if self._bridge.is_running:
+            self._bridge.stop()
+        self._bridge._audio.open(  # noqa: SLF001
+            self._config.audio.input_device,
+            self._config.audio.output_device,
+            self._config.audio.sample_rate,
+            self._config.audio.block_size,
+        )
 
     def _ensure_bridge_running(self, tx_only: bool = False) -> None:
         if self._config.transfer.loopback_mode or not self._bridge:
@@ -120,9 +157,12 @@ class TransferEngine:
         if self._bridge.is_running:
             self._bridge.stop()
         self._bridge_tx_only = False
+        self._resume_audio_monitor_if_on_air()
 
     def _spectrum_callback(self, bins: list[float]) -> None:
-        self._event_bus.publish(SpectrumEvent(bins=bins))
+        self._event_bus.publish(
+            SpectrumEvent(bins=bins, sample_rate=self._tx_modem.modem_sample_rate)
+        )
 
     def _ensure_spectrum_tap(self) -> WaterfallTap:
         if self._spectrum_tap is None:
@@ -132,7 +172,18 @@ class TransferEngine:
     def _feed_spectrum(self, audio: np.ndarray) -> None:
         if len(audio) == 0:
             return
-        monitor = self._config.waterfall.tx_monitor or self._config.transfer.loopback_mode
+        live_tx = self._state in (
+            SessionState.TUNING,
+            SessionState.TX_ARMED,
+            SessionState.TX_WATERFALL_HEADER,
+            SessionState.TX_ACTIVE,
+            SessionState.TX_WATERFALL_FOOTER,
+        )
+        monitor = (
+            self._config.waterfall.tx_monitor
+            or self._config.transfer.loopback_mode
+            or live_tx
+        )
         if not monitor:
             return
         self._ensure_spectrum_tap().feed(audio)
@@ -446,6 +497,8 @@ class TransferEngine:
                 pass
             if bridge_started_here:
                 self._maybe_stop_bridge()
+            else:
+                self._resume_audio_monitor_if_on_air()
 
     def start_tune(self) -> None:
         if self._config.transfer.loopback_mode:
@@ -499,6 +552,8 @@ class TransferEngine:
         if was_tuning and self._worker and self._worker.is_alive():
             self._worker.join(timeout=5.0)
             self._abort.clear()
+            self._set_state(SessionState.IDLE)
+            self._resume_audio_monitor_if_on_air()
             return
         if self._bridge:
             self._bridge.stop()
@@ -510,3 +565,4 @@ class TransferEngine:
                 pass
         self._event_bus.publish(LogEvent(level="warning", message="Transfer aborted"))
         self._set_state(SessionState.IDLE)
+        self._resume_audio_monitor_if_on_air()

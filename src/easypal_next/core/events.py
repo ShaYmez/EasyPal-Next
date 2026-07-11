@@ -31,6 +31,7 @@ class RxImageReadyEvent:
 @dataclass(frozen=True)
 class SpectrumEvent:
     bins: list[float]
+    sample_rate: int = 48000
 
 
 @dataclass(frozen=True)

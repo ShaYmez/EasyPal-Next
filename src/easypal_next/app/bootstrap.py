@@ -47,7 +47,9 @@ class AppContext:
                 self.rx_modem,
                 config.audio.sample_rate,
                 config.modem.sample_rate,
-                on_spectrum=lambda bins: self.event_bus.publish(SpectrumEvent(bins=bins)),
+                on_spectrum=lambda bins: self.event_bus.publish(
+                    SpectrumEvent(bins=bins, sample_rate=config.audio.sample_rate)
+                ),
             )
         self.transfer_engine = TransferEngine(
             config,
@@ -67,6 +69,27 @@ class AppContext:
             config.callsign,
             config.modem.mode,
         )
+
+    def refresh_modem_bridge(self) -> None:
+        """Rebuild sound-card bridge after loopback/on-air or audio device changes."""
+        config = self.config
+        if self.modem_bridge and self.modem_bridge.is_running:
+            self.modem_bridge.stop()
+        if config.transfer.loopback_mode:
+            self.modem_bridge = None
+        else:
+            self.modem_bridge = ModemBridge(
+                self.audio_engine,
+                self.rx_modem,
+                config.audio.sample_rate,
+                config.modem.sample_rate,
+                on_spectrum=lambda bins: self.event_bus.publish(
+                    SpectrumEvent(bins=bins, sample_rate=config.audio.sample_rate)
+                ),
+            )
+        self.transfer_engine.set_modem_bridge(self.modem_bridge)
+        if not config.transfer.loopback_mode and self.modem_bridge is not None:
+            self.transfer_engine.start_audio_monitor()
 
 
 def build_context() -> AppContext:
