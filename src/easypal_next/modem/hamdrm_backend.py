@@ -15,6 +15,7 @@ from easypal_next.core.events import (
     GalleryUpdatedEvent,
     LogEvent,
     RxImageReadyEvent,
+    SpectrumEvent,
 )
 from easypal_next.modem.hamdrm_api import (
     SPECTRUM_BINS,
@@ -142,11 +143,52 @@ class HamDrmBackend(TransferBackend):
         lib.SetRXCorruptSavePath(encode_c_path(str(corrupt) + "\\"))
         lib.SetBSRPath(encode_c_path(str(bsr) + "\\"))
 
-    def _audio_device_id(self, which: str) -> int:
-        cfg = self._config.audio
+    def _normalize_device_name(self, name: str) -> str:
+        return " ".join(name.lower().replace("(mapped)", "").split())
+
+    def _winmm_device_by_name(self, which: str, preferred_name: str | None) -> int:
+        """Map a PortAudio-style device name onto a WinMM index used by the DLL."""
+        lib = self._require_lib()
         if which == "in":
-            return int(cfg.input_device) if cfg.input_device is not None else 0
-        return int(cfg.output_device) if cfg.output_device is not None else 0
+            count = int(lib.GetAudNumDevIn())
+            get_name = lib.GetAudDeviceNameIn
+        else:
+            count = int(lib.GetAudNumDevOut())
+            get_name = lib.GetAudDeviceNameOut
+        if count <= 0:
+            return 0
+        if not preferred_name:
+            return 0
+        needle = self._normalize_device_name(preferred_name)
+        for index in range(count):
+            raw = get_name(index)
+            if not raw:
+                continue
+            label = raw.decode("mbcs", errors="replace") if isinstance(raw, bytes) else str(raw)
+            hay = self._normalize_device_name(label)
+            if needle == hay or needle in hay or hay in needle:
+                return index
+        return 0
+
+    def _sounddevice_name(self, which: str) -> str | None:
+        """Resolve configured PortAudio device index to a device name."""
+        cfg = self._config.audio
+        index = cfg.input_device if which == "in" else cfg.output_device
+        if index is None:
+            return None
+        try:
+            from easypal_next.audio.sounddevice_engine import SoundDeviceEngine
+
+            for device in SoundDeviceEngine().list_devices():
+                if int(device["index"]) == int(index):
+                    return str(device["name"])
+        except Exception:  # noqa: BLE001 — fall back to WinMM 0
+            logger.debug("Could not resolve sounddevice name for %s=%s", which, index, exc_info=True)
+        return None
+
+    def _audio_device_id(self, which: str) -> int:
+        """Return WinMM device index for HamDRM (not PortAudio index)."""
+        return self._winmm_device_by_name(which, self._sounddevice_name(which))
 
     def start_always_on_rx(self) -> None:
         lib = self._require_lib()
@@ -191,6 +233,21 @@ class HamDrmBackend(TransferBackend):
         if thread and thread.is_alive():
             thread.join(timeout=2.0)
 
+    def _publish_spectrum(self) -> None:
+        if not self._config.waterfall.live_enabled:
+            return
+        try:
+            bins = self.get_spectrum()
+        except Exception:  # noqa: BLE001
+            return
+        self._event_bus.publish(
+            SpectrumEvent(
+                bins=bins,
+                sample_rate=self._config.audio.sample_rate,
+                source="rx",
+            )
+        )
+
     def _poll_rx_loop(self) -> None:
         buf = create_string_buffer(260)
         while not self._poll_stop.wait(_POLL_INTERVAL_S):
@@ -198,6 +255,12 @@ class HamDrmBackend(TransferBackend):
                 lib = self._lib
                 if lib is None:
                     continue
+                fatal = int(lib.getFatalErr())
+                if fatal:
+                    self._event_bus.publish(
+                        LogEvent(level="error", message=f"HamDRM fatal error code {fatal}")
+                    )
+                self._publish_spectrum()
                 if not lib.GetFileRX(buf):
                     continue
                 name = buf.value.decode("mbcs", errors="replace").strip()

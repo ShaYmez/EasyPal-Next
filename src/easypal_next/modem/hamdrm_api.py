@@ -79,6 +79,16 @@ def python_is_64bit() -> bool:
     return struct.calcsize("P") == 8
 
 
+def dll_matches_python(path: Path) -> bool:
+    """True if PE bitness matches this Python process (or PE bitness is unknown)."""
+    machine = pe_machine(path)
+    if machine is None:
+        return True
+    if python_is_64bit():
+        return machine == IMAGE_FILE_MACHINE_AMD64
+    return machine == IMAGE_FILE_MACHINE_I386
+
+
 def candidate_hamdrm_paths(configured_path: str | None = None) -> list[Path]:
     """Ordered search list for HamDRM-compatible DLLs."""
     candidates: list[Path] = []
@@ -92,19 +102,22 @@ def candidate_hamdrm_paths(configured_path: str | None = None) -> list[Path]:
         _add(Path(configured_path))
 
     _add(user_data_dir() / "hamdrm.dll")
+
+    # Local x64 build output (dev tree)
+    root = app_root()
+    pkg = package_root()
+    _add(root / "native" / "hamdrm-dll" / "build-x64" / "bin" / "hamdrm.dll")
+    _add(root / "packaging" / "windows" / "redist" / "hamdrm.dll")
+    _add(root / "packaging" / "windows" / "redist" / "run.dll")
+
     _add(EASYPAL_PROGRAM_FILES / "run.dll")
     _add(EASYPAL_PROGRAM_FILES / "hamdrm.dll")
     _add(EASYPAL_PROGRAM_FILES_X86 / "run.dll")
     _add(EASYPAL_PROGRAM_FILES_X86 / "hamdrm.dll")
 
-    # Next to executable / packaging redist
-    root = app_root()
-    pkg = package_root()
     for base in (root, pkg, root / "_internal", pkg / "modem"):
         _add(base / "hamdrm.dll")
         _add(base / "run.dll")
-    _add(root / "packaging" / "windows" / "redist" / "hamdrm.dll")
-    _add(root / "packaging" / "windows" / "redist" / "run.dll")
 
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
@@ -115,9 +128,13 @@ def candidate_hamdrm_paths(configured_path: str | None = None) -> list[Path]:
 
 
 def resolve_hamdrm_dll(configured_path: str | None = None) -> Path | None:
-    """Return the first existing candidate path, or None."""
+    """Return the first existing candidate whose PE bitness matches Python.
+
+    Skips 32-bit EasyPal ``run.dll`` when running under 64-bit Python so a
+    local x64 ``hamdrm.dll`` can be selected instead.
+    """
     for path in candidate_hamdrm_paths(configured_path):
-        if path.is_file():
+        if path.is_file() and dll_matches_python(path):
             return path
     return None
 

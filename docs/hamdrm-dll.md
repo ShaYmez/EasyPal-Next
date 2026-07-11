@@ -19,9 +19,11 @@ Probe with:
 ## Current behaviour
 
 1. Settings default engine = **HamDRM**
-2. Factory tries to load `run.dll` / `hamdrm.dll`
-3. On bitness mismatch → **fallback to FreeDV** with a clear log/status warning
-4. Always-on Auto RX still works on the FreeDV path
+2. Factory loads the first **bitness-matching** `hamdrm.dll` / `run.dll` (skips 32-bit EasyPal `run.dll` under 64-bit Python)
+3. Search order prefers `%APPDATA%\EasyPal-Next\hamdrm.dll`, then local `native/.../build-x64/bin`, then packaging redist
+4. When HamDRM loads: always-on RX uses the DLL (WinMM); FreeDV PortAudio bridge is not started
+5. Transmit routes to `HamDrmBackend.transmit_file()`; live waterfall uses `GetSpectrum`
+6. On load failure → **fallback to FreeDV** with a clear log/status warning
 
 ## Path to real EasyPal interop
 

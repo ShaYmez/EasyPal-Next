@@ -41,9 +41,8 @@ class AppContext:
             else None
         )
         self.gallery = GalleryStore(gallery_dir, received_dir=received)
+        # Defer PortAudio bridge until we know whether HamDRM owns WinMM audio.
         self.modem_bridge: ModemBridge | None = None
-        if not config.transfer.loopback_mode:
-            self.modem_bridge = self._make_modem_bridge(config)
         self.transfer_engine = TransferEngine(
             config,
             self.event_bus,
@@ -63,6 +62,12 @@ class AppContext:
         self.transfer_backend: TransferBackend = selection.backend
         self.hamdrm_fell_back = selection.hamdrm_fell_back
         self.hamdrm_unavailable_reason = selection.hamdrm_unavailable_reason
+        if (
+            not config.transfer.loopback_mode
+            and selection.active_engine == "freedv"
+        ):
+            self.modem_bridge = self._make_modem_bridge(config)
+            self.transfer_engine.set_modem_bridge(self.modem_bridge)
         self.network_server = NetworkServer(
             config.network,
             self.event_bus,
@@ -77,13 +82,17 @@ class AppContext:
         config = self.config
         if self.modem_bridge and self.modem_bridge.is_running:
             self.modem_bridge.stop()
-        if config.transfer.loopback_mode:
+        use_freedv_audio = (
+            not config.transfer.loopback_mode
+            and getattr(self.transfer_backend, "engine_name", "freedv") == "freedv"
+        )
+        if not use_freedv_audio:
             self.modem_bridge = None
         else:
             self.modem_bridge = self._make_modem_bridge(config)
         self.transfer_engine.set_modem_bridge(self.modem_bridge)
         self.transfer_engine.reload_spectrum_tap()
-        if not config.transfer.loopback_mode and self.modem_bridge is not None:
+        if use_freedv_audio and self.modem_bridge is not None:
             self.transfer_engine.start_audio_monitor()
 
     def _make_modem_bridge(self, config: AppConfig) -> ModemBridge:

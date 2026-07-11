@@ -156,8 +156,10 @@ class MainWindow(QMainWindow):
 
         if not context.config.transfer.loopback_mode:
             try:
-                context.transfer_engine.start_audio_monitor()
-                # Always-on RX like original EasyPal when Auto RX is enabled (default).
+                engine = getattr(context.transfer_backend, "engine_name", "freedv")
+                # HamDRM owns WinMM capture; FreeDV uses PortAudio via TransferEngine.
+                if engine == "freedv":
+                    context.transfer_engine.start_audio_monitor()
                 if context.config.transfer.auto_rx:
                     context.transfer_backend.start_always_on_rx()
                     self._actions.auto_rx.setChecked(True)
@@ -168,6 +170,8 @@ class MainWindow(QMainWindow):
                     f"HamDRM unavailable — using FreeDV. {context.hamdrm_unavailable_reason}",
                     12000,
                 )
+            elif getattr(context.transfer_backend, "engine_name", "") == "hamdrm":
+                self.statusBar().showMessage("HamDRM engine active", 6000)
 
         self._fit_to_screen()
 
@@ -312,17 +316,37 @@ class MainWindow(QMainWindow):
         cfg = self._context.config
         mode = "loopback" if cfg.transfer.loopback_mode else "on-air"
         state = self._context.transfer_engine.state.value
-        engine = getattr(self._context.transfer_backend, "engine_name", cfg.modem.engine)
+        backend_engine = getattr(self._context.transfer_backend, "engine_name", cfg.modem.engine)
+        engine = backend_engine
         if self._context.hamdrm_fell_back:
             engine = f"{engine} (HamDRM fallback)"
-        listen = " · listening" if (
+        listening = (
             not cfg.transfer.loopback_mode
             and cfg.transfer.auto_rx
-            and state in ("idle", "rx_listen", "rx_assembling")
-        ) else ""
+            and (
+                state in ("idle", "rx_listen", "rx_assembling")
+                or backend_engine == "hamdrm"
+            )
+        )
+        listen = " · listening" if listening else ""
+        sync = ""
+        if backend_engine == "hamdrm" and not self._context.hamdrm_fell_back:
+            try:
+                s = self._context.transfer_backend.get_sync_state()
+                parts = []
+                if s.snr_db is not None:
+                    parts.append(f"SNR {s.snr_db:.0f} dB")
+                if s.fac:
+                    parts.append("FAC")
+                if s.msc:
+                    parts.append("MSC")
+                if parts:
+                    sync = " · " + " ".join(parts)
+            except Exception:
+                pass
         file_part = f" · {self._selected_file.name}" if self._selected_file else ""
         self._status_main.setText(
-            f"{cfg.callsign} · {engine} · {cfg.modem.mode} · {mode} · {state}{listen}{file_part}"
+            f"{cfg.callsign} · {engine} · {cfg.modem.mode} · {mode} · {state}{listen}{sync}{file_part}"
         )
 
     def _persist_waterfall_config(self) -> None:
@@ -407,6 +431,16 @@ class MainWindow(QMainWindow):
     def _transmit(self) -> None:
         if self._selected_file is None:
             QMessageBox.warning(self, "Transmit", "LoadPic first — select a file to transmit.")
+            return
+        backend = self._context.transfer_backend
+        if getattr(backend, "engine_name", "") == "hamdrm":
+            self._persist_waterfall_config()
+            try:
+                backend.transmit_file(self._selected_file)
+                self.statusBar().showMessage(f"HamDRM TX: {self._selected_file.name}", 5000)
+                self._update_status_text()
+            except Exception as exc:
+                QMessageBox.critical(self, "Transmit", str(exc))
             return
         if self._context.transfer_engine.state != SessionState.IDLE:
             QMessageBox.warning(self, "Transmit", "Transfer already in progress.")
