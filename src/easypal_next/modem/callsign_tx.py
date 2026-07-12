@@ -98,14 +98,21 @@ def play_pcm_blocking(
     waterfall=None,
     play_sample_rate: int | None = None,
 ) -> None:
-    """Play int16 mono PCM on the output device; honour optional stop_event."""
+    """Play int16 mono PCM; honour optional stop_event.
+
+    Defaults to WinMM on Windows so HamDRM loopback preview stays PortAudio-free.
+    """
+    import sys
+
+    backend = "winmm" if sys.platform == "win32" else "portaudio"
     play_waterfall_pcm(
         samples,
         sample_rate=sample_rate,
-        play_sample_rate=play_sample_rate,
+        play_sample_rate=play_sample_rate or sample_rate,
         output_device=output_device,
         stop_event=stop_event,
         event_bus=event_bus,
         waterfall=waterfall,
         spectrum_source="tx",
+        backend=backend,  # type: ignore[arg-type]
     )

@@ -5,14 +5,15 @@ from __future__ import annotations
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 
-# EasyPal waterfall display calibration ~11.63 Hz/pixel; paint uses a slightly
-# coarser grid so additive tones stay musical rather than white-noise dense.
-PAINT_HZ_PER_PIXEL = 18.0
+# EasyPal waterfall display calibration ~11.63 Hz/pixel. Match that density so
+# glyphs sound/look like stock WFTxt (18 Hz/px was too sparse / harsh).
+PAINT_HZ_PER_PIXEL = 12.0
 
 
 def paint_height_for_band(freq_min_hz: int, freq_max_hz: int) -> int:
     span = max(100, int(freq_max_hz) - int(freq_min_hz))
-    return max(64, min(160, int(round(span / PAINT_HZ_PER_PIXEL))))
+    # Allow enough rows for ~12 Hz/px across EasyPal's ~150–2800 Hz paint band.
+    return max(64, min(256, int(round(span / PAINT_HZ_PER_PIXEL))))
 
 
 def render_text_bitmap(
@@ -26,6 +27,7 @@ def render_text_bitmap(
     freq_max_hz: int = 2500,
     negative: bool = False,
     min_columns: int = 80,
+    slash_zeros: bool = False,
 ) -> Image.Image:
     """Render waterfall text for SpectrumPainter.
 
@@ -52,11 +54,13 @@ def render_text_bitmap(
     if font is None:
         font = ImageFont.load_default()
 
-    bbox = draw.textbbox((0, 0), text, font=font)
+    paint_text = text.replace("0", "Ø") if slash_zeros else text
+
+    bbox = draw.textbbox((0, 0), paint_text, font=font)
     text_h = bbox[3] - bbox[1]
     x = 6
     y = max(0, (height - text_h) // 2 - bbox[1])
-    draw.text((x, y), text, fill=255, font=font)
+    draw.text((x, y), paint_text, fill=255, font=font)
     image = image.filter(ImageFilter.MaxFilter(3))
 
     content = image.getbbox()

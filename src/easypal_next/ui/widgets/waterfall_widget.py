@@ -30,7 +30,10 @@ def spectrum_source_accepted(
     session_state: SessionState,
     source: Literal["rx", "tx"],
 ) -> bool:
-    """Return whether a spectrum row should be shown for the current session."""
+    """Return whether a spectrum row should be shown for the current session.
+
+    During Tune / WFTxt / file TX only TX taps scroll (RX GetSpectrum is paused).
+    """
     if session_state in _TX_SPECTRUM_STATES:
         return source == "tx"
     return source == "rx"

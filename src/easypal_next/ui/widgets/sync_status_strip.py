@@ -40,6 +40,10 @@ class SyncStatusStrip(QWidget):
         self._tx.setObjectName("syncTxLabel")
         layout.addWidget(self._tx)
 
+        self._segs = QLabel("")
+        self._segs.setObjectName("syncSegLabel")
+        layout.addWidget(self._segs)
+
         self._relay = SyncStatusRelay(event_bus, self)
         self._relay.sync_received.connect(self._on_sync, Qt.ConnectionType.QueuedConnection)
 
@@ -69,7 +73,22 @@ class SyncStatusStrip(QWidget):
             parts.append(f"DC {event.dc_freq} Hz")
         self._profile.setText(" · ".join(parts))
         if event.percent_tx is not None:
-            seg = f" seg {event.seg_pos}" if event.seg_pos is not None else ""
+            seg = ""
+            if event.seg_pos is not None:
+                if event.seg_total:
+                    seg = f" seg {event.seg_pos}/{event.seg_total}"
+                else:
+                    seg = f" seg {event.seg_pos}"
             self._tx.setText(f"TX {event.percent_tx}%{seg}")
         else:
             self._tx.setText("")
+        # EasyPal-style Total / OK / Position strip (RX GetData or TX segs).
+        if event.rx_total is not None or event.rx_ok is not None or event.rx_pos is not None:
+            tot = event.rx_total if event.rx_total is not None else "—"
+            ok = event.rx_ok if event.rx_ok is not None else "—"
+            pos = event.rx_pos if event.rx_pos is not None else "—"
+            self._segs.setText(f"Total {tot} · OK {ok} · Pos {pos}")
+        elif event.seg_total is not None and event.percent_tx is not None:
+            self._segs.setText(f"Total {event.seg_total} · Pos {event.seg_pos or 0}")
+        else:
+            self._segs.setText("")

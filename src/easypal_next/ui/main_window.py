@@ -239,6 +239,7 @@ class MainWindow(QMainWindow):
     def _connect_actions(self) -> None:
         a = self._actions
         a.load_pic.triggered.connect(self._load_pic)
+        a.pic_qsl.triggered.connect(self._pic_qsl)
         a.preferences.triggered.connect(self._open_settings)
         a.exit_app.triggered.connect(self.close)
         a.transmit.triggered.connect(self._transmit)
@@ -246,6 +247,14 @@ class MainWindow(QMainWindow):
         a.tune.toggled.connect(self._toggle_tune)
         a.abort.triggered.connect(self._abort)
         a.send_wftxt.triggered.connect(self._send_wftxt)
+        a.send_wfpic.triggered.connect(self._send_wfpic)
+        a.send_cw_id.triggered.connect(self._send_cw_id)
+        a.fix_bsr.triggered.connect(lambda: self._send_bsr(fast=False))
+        a.fast_bsr.triggered.connect(lambda: self._send_bsr(fast=True))
+        a.answer_bsr.triggered.connect(self._answer_bsr)
+        a.del_bsr.triggered.connect(self._del_bsr)
+        a.open_corrupt.triggered.connect(self._open_corrupt)
+        a.station_log.triggered.connect(self._open_station_log)
         a.waterfall_tx_on_file.toggled.connect(self._on_waterfall_toggled)
         a.live_waterfall.toggled.connect(self._on_live_waterfall_toggled)
         a.auto_rx.toggled.connect(self._on_auto_rx_toggled)
@@ -475,6 +484,114 @@ class MainWindow(QMainWindow):
             self._selected_file = Path(path)
             self._file_label.setText(self._selected_file.name)
             self._update_status_text()
+
+    def _pic_qsl(self) -> None:
+        from easypal_next.ui.widgets.pic_qsl_dialog import PicQslDialog
+
+        dlg = PicQslDialog(callsign=self._context.config.callsign, parent=self)
+        if dlg.exec() and dlg.composed_path is not None:
+            self._selected_file = dlg.composed_path
+            self._file_label.setText(self._selected_file.name)
+            self._update_status_text()
+            self.statusBar().showMessage(f"QSL ready: {self._selected_file.name}", 5000)
+
+    def _open_station_log(self) -> None:
+        from easypal_next.ui.widgets.station_log_dialog import StationLogDialog
+
+        StationLogDialog(self).exec()
+
+    def _send_cw_id(self) -> None:
+        backend = self._context.transfer_backend
+        send = getattr(backend, "transmit_cw_id", None)
+        if not callable(send):
+            QMessageBox.information(self, "CW ID", "CW ID is only available with the HamDRM engine.")
+            return
+        try:
+            send(tone_hz=1200)
+            self.statusBar().showMessage("CW ID…", 3000)
+        except Exception as exc:
+            QMessageBox.critical(self, "CW ID", str(exc))
+
+    def _send_wfpic(self) -> None:
+        from easypal_next.waterfall.user_wave_files import default_wfpic_start_dir
+
+        backend = self._context.transfer_backend
+        send = getattr(backend, "transmit_waterfall_image", None)
+        if not callable(send):
+            QMessageBox.information(
+                self, "WFPic", "WFPic is only available with the HamDRM engine."
+            )
+            return
+        cinema = bool(getattr(self._context.config.waterfall, "cinema_scroll", False))
+        start = default_wfpic_start_dir(cinema_scroll=cinema)
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Send WFPic",
+            str(start) if start else "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif);;All files (*.*)",
+        )
+        if not path_str:
+            return
+        self._persist_waterfall_config()
+        try:
+            send(Path(path_str))
+            self.statusBar().showMessage(f"WFPic: {Path(path_str).name}", 5000)
+        except Exception as exc:
+            QMessageBox.critical(self, "WFPic", str(exc))
+
+    def _send_bsr(self, *, fast: bool) -> None:
+        backend = self._context.transfer_backend
+        send = getattr(backend, "send_bsr", None)
+        if not callable(send):
+            QMessageBox.information(
+                self, "BSR", "BSR is only available with the HamDRM engine."
+            )
+            return
+        try:
+            send(fast=fast)
+            self.statusBar().showMessage("Fast BSR…" if fast else "FIX / BSR…", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "BSR", str(exc))
+
+    def _answer_bsr(self) -> None:
+        backend = self._context.transfer_backend
+        answer = getattr(backend, "answer_bsr", None)
+        if not callable(answer):
+            QMessageBox.information(
+                self, "Answer BSR", "Answer BSR is only available with the HamDRM engine."
+            )
+            return
+        try:
+            answer()
+            self.statusBar().showMessage("Answering BSR…", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Answer BSR", str(exc))
+
+    def _del_bsr(self) -> None:
+        backend = self._context.transfer_backend
+        clear = getattr(backend, "clear_bsr_files", None)
+        if not callable(clear):
+            QMessageBox.information(
+                self, "Del BSR", "Del BSR is only available with the HamDRM engine."
+            )
+            return
+        try:
+            n = clear()
+            self.statusBar().showMessage(f"Del BSR — removed {n} file(s)", 4000)
+        except Exception as exc:
+            QMessageBox.critical(self, "Del BSR", str(exc))
+
+    def _open_corrupt(self) -> None:
+        backend = self._context.transfer_backend
+        getter = getattr(backend, "corrupt_dir", None)
+        if callable(getter):
+            folder = getter()
+        else:
+            from easypal_next.app.paths import user_data_dir
+
+            folder = user_data_dir() / "corrupt"
+            folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _transmit(self) -> None:
         if self._selected_file is None:

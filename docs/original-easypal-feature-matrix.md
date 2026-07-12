@@ -100,8 +100,8 @@ Sources: `Language.english` (Ver:29B/JAN/2014), `updateinfo.text` (through **07 
 | FAC / MSC / sync / SNR | Labels FAC, MSC, Frame, Sync, SNR dB; green FAC lock | **P0** | **Missing** (no FAC/MSC) |
 | Image TX (LoadPic / LoadAny) | Load image or arbitrary file; downsize options; TRANSMIT | **P0** | **Partial** — LoadPic + file transfer over DATAC3 |
 | Image RX → Inbox | Decode → save under `\Inbox\`; progressive display option | **P0** | **Partial** — gallery save; not DRM Inbox semantics |
-| Segment progress | Total / OK Segs / Position / remaining segments | **P0** | **Partial** — transfer progress events |
-| BSR (Bad Segment Repair) | Automatic BSR (recommended) or user-select; Corrupt folder; FIX / Fast BSR / Del BSR | **P0** | **Missing** — WFTxt preset string only (`**** BSR REQUEST ****`) |
+| Segment progress | Total / OK Segs / Position / remaining segments | **P0** | **Done** — sync strip Total/OK/Pos from GetData + TX GetSegPosTX |
+| BSR (Bad Segment Repair) | Automatic BSR (recommended) or user-select; Corrupt folder; FIX / Fast BSR / Del BSR | **P0** | **Partial** — FIX / Fast BSR / Answer / Del BSR / Corrupt folder via DLL |
 | Repeat Header | Highly recommended Always ON | **P0** | **Missing** (DRM header concept) |
 | Soundcard select by name | Persists across driver changes; warning if missing | **P0** | **Partial** — PortAudio device indices |
 | PTT: VOX | Default-friendly path | **P0** | **Done** — `vox` profile |
@@ -110,8 +110,8 @@ Sources: `Language.english` (Ver:29B/JAN/2014), `updateinfo.text` (through **07 
 | Callsign | Setup + GUI; tag RX with callsign/time/mode | **P0** | **Partial** — `callsign` in config |
 | Tune | Action → Tune; button TUNE; `tune.wav` | **P0** | **Done** — Tune session (on-air, not DRM tone set) |
 | Waterfall live RX | Continuous spectrum; AGC; reverse R/N; color; seconds bar | **P0** | **Partial** — live FFT waterfall |
-| WFTxt / WFPic | Waterfall text & picture TX; begin/end.wav; negative recommended | **P1** | **Partial** — WFTxt encoder; no full WFPic parity |
-| Wait TX while QRM | Recommended always ON | **P0** | **Missing** |
+| WFTxt / WFPic | Waterfall text & picture TX; begin/end.wav; negative recommended | **P1** | **Partial** — WFTxt + WFPic WinMM; begin/end cues; cinema/slash-zeros |
+| Wait TX while QRM | Recommended always ON | **P0** | **Done** — GetLevel/GetSNR gate before ControlTX |
 | TX mode = RX mode | Needed with old BSR | **P0** | N/A until DRM+BSR |
 | Unattended / no popups | Setup → Unattended | **P1** | **Missing** |
 | Hybrid TX | Upload file; TX short retrieval code over air; RX auto-downloads | **P1** | **Stub** — `community/hybrid.py` + `HYBRID_REF` packet type |

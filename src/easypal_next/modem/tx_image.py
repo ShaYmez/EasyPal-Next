@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from easypal_next.app.paths import user_data_dir
+from easypal_next.modem.embed_txt import embed_text_on_image
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +16,17 @@ _MAX_HEIGHT = 1024
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
 
 
-def prepare_hamdrm_tx_file(path: Path, *, jpeg_quality: int = 75) -> Path:
+def prepare_hamdrm_tx_file(
+    path: Path,
+    *,
+    jpeg_quality: int = 75,
+    embed_text: str | None = None,
+) -> Path:
     """Return a TX-ready file path (compressed JPEG for images, else original).
 
     EasyPal converts LoadPIC images to a compact JPEG-2000 object before DRM.
-    We use JPEG (Pillow) so a large PNG is not sent raw.
+    We use JPEG (Pillow) so a large PNG is not sent raw. Optional EmbedTxt
+    overlays text before compression.
     """
     src = Path(path).resolve()
     if not src.is_file():
@@ -40,6 +47,8 @@ def prepare_hamdrm_tx_file(path: Path, *, jpeg_quality: int = 75) -> Path:
     with Image.open(src) as image:
         image = image.convert("RGB")
         image.thumbnail((_MAX_WIDTH, _MAX_HEIGHT), Image.Resampling.LANCZOS)
+        if embed_text and embed_text.strip():
+            image = embed_text_on_image(image, embed_text.strip())
         image.save(out, format="JPEG", quality=int(jpeg_quality), optimize=True)
 
     src_kb = src.stat().st_size / 1024.0

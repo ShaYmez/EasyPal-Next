@@ -53,6 +53,11 @@ class SyncStatusEvent:
     mode: str = ""
     percent_tx: int | None = None
     seg_pos: int | None = None
+    seg_total: int | None = None
+    """RX GetData: total / active / position (EasyPal OK Segs strip)."""
+    rx_total: int | None = None
+    rx_ok: int | None = None
+    rx_pos: int | None = None
 
 
 @dataclass(frozen=True)

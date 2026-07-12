@@ -1,0 +1,24 @@
+{
+  "easypal_bsr": {
+    "source": "%APPDATA%/EasyPal/programwavfiles/bsr.wav",
+    "rate": 25000,
+    "duration_s": 3.3178,
+    "column_ms_approx": 40.96,
+    "peak_i16_approx": 9471,
+    "band_hz_approx": [150, 2800]
+  },
+  "easypal_tune": {
+    "source": "%APPDATA%/EasyPal/programwavfiles/tune.wav",
+    "rate": 11025,
+    "duration_s": 6.0,
+    "peaks_hz": [720, 1466, 1840]
+  },
+  "targets": {
+    "paint_hz_per_pixel": 12.0,
+    "line_time_ms": 41.0,
+    "sample_rate": 25000,
+    "freq_max_hz": 2700,
+    "peak_normalize": 0.35,
+    "min_body_seconds": 3.2
+  }
+}

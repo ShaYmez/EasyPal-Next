@@ -83,6 +83,24 @@ class TransferConfig(BaseModel):
     require_callsign_wftxt_header: bool = True
     """Silence after callsign header before Tune tone / file TX / WFTxt body (seconds)."""
     callsign_header_gap_seconds: float = 1.0
+    """Play EasyPal-style CW ID (ID1200.wav) after a successful file TX."""
+    cw_id_after_tx: bool = False
+    """Overlay EmbedTxt (callsign or custom) on TX images before send."""
+    embed_txt_enabled: bool = False
+    """Text for EmbedTxt; blank = use station callsign."""
+    embed_txt_message: str = ""
+    """Play EasyPal program cues (begin/end WAVs) around file TX via WinMM."""
+    play_tx_cues: bool = True
+    """Prefer ``*-n.wav`` negative program cues when available."""
+    cue_negative: bool = False
+    """Delay file TX while channel looks busy (EasyPal Wait TX while QRM)."""
+    wait_tx_while_qrm: bool = True
+    """Treat SNR above this (dB) as busy when Wait TX while QRM is on."""
+    qrm_snr_db: float = 2.0
+    """Treat HamDRM GetLevel above this (0–100-ish) as busy."""
+    qrm_level: int = 35
+    """Seconds to wait for QRM to clear before TX (then proceed anyway)."""
+    qrm_timeout_seconds: float = 8.0
 
 
 class WaterfallConfig(BaseModel):
@@ -92,10 +110,13 @@ class WaterfallConfig(BaseModel):
     """Paint sample rate — EasyPal WFTxt WAVs use 25000 Hz."""
     sample_rate: int = 25000
     freq_min_hz: int = 100
-    freq_max_hz: int = 2500
+    """EasyPal cue WAVs paint up to ~2800 Hz; 2500 clipped the top of glyphs."""
+    freq_max_hz: int = 2700
     """Milliseconds per bitmap column (~41 ms matches EasyPal fix-n / bsr-n)."""
     line_time_ms: float = 41.0
     line_repeats: int = 1
+    """Minimum on-air paint time for short WFTxt (EasyPal cues ≈ 3.32 s)."""
+    min_body_seconds: float = 3.2
     default_font: str = "Tahoma"
     default_font_size: int = 24
     """EasyPal negative paint: fill band, cut letter holes. Off by default —
@@ -103,8 +124,10 @@ class WaterfallConfig(BaseModel):
     negative_paint: bool = False
     begin_message: str = "<< EASYPAL >>"
     end_message: str = ""
-    begin_wav: str | None = None
-    end_wav: str | None = None
+    """Program cue stem or path before file TX (EasyPal ``selected`` / custom)."""
+    begin_wav: str | None = "selected"
+    """Program cue stem or path after successful file TX (EasyPal ``fileok``)."""
+    end_wav: str | None = "fileok"
     tx_monitor: bool = True
     colormap: Literal["green", "heat", "grayscale"] = "grayscale"
     min_db: float = -60.0
@@ -121,6 +144,10 @@ class WaterfallConfig(BaseModel):
     history_rows: int = 512
     """Lines to advance the waterfall per FFT row (scroll speed)."""
     scroll_pixels: int = 1
+    """Cinema scroll: newest spectrum at bottom (EasyPal bottom→top preference)."""
+    cinema_scroll: bool = False
+    """Render digit zero as slashed Ø in WFTxt (EasyPal slash-zeros habit)."""
+    slash_zeros: bool = False
 
 
 class UiConfig(BaseModel):

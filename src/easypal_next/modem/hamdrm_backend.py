@@ -31,6 +31,8 @@ from easypal_next.modem.callsign_tx import (
     effective_callsign,
     play_pcm_blocking,
 )
+from easypal_next.modem.cw_id import play_cw_id
+from easypal_next.core.station_log import append_station_log
 from easypal_next.modem.hamdrm_api import (
     SPECTRUM_BINS,
     HamDrmUnavailable,
@@ -44,22 +46,38 @@ from easypal_next.modem.hamdrm_api import (
     resolve_hamdrm_dll,
     specocc_constant,
 )
+from easypal_next.modem.qrm_gate import channel_looks_busy
 from easypal_next.modem.transfer_backend import SyncState, TransferBackend
 from easypal_next.network.gallery_store import GalleryStore
 from easypal_next.radio.controller import RadioController
 from easypal_next.modem.tx_image import prepare_hamdrm_tx_file
-from easypal_next.waterfall.cue_wav import load_tune_pcm
-from easypal_next.waterfall.tx_pcm import encode_waterfall_text, play_waterfall_pcm
+from easypal_next.waterfall.cue_wav import (
+    load_tune_pcm,
+    load_wav_int16,
+    play_program_cue,
+    resolve_tune_wav,
+)
+from easypal_next.waterfall.tx_pcm import (
+    encode_waterfall_image,
+    encode_waterfall_text,
+    play_waterfall_pcm,
+)
 
 logger = logging.getLogger(__name__)
 
-# GetState layout used by EasyPal / WinDRM UIs: IO, Time, Frame, FAC, MSC
-_STATE_IO = 0
-_STATE_TIME = 1
-_STATE_FRAME = 2
-_STATE_FAC = 3
-_STATE_MSC = 4
+# GetState returns messtate[0..7] indexed by PostWinMessage MessID
+# (see native/hamdrm-dll/common/GlobalDefinitions.h + hamdrm.cpp):
+#   MS_FAC_CRC=1, MS_MSC_CRC=2, MS_FRAME_SYNC=3, MS_TIME_SYNC=4, MS_IOINTERFACE=5
+# LED values: 0=green/OK, 1=yellow, 2=red/bad, -1=never set / reset.
+# bool(-1) is True in Python — that made idle LEDs falsely green.
+_STATE_FAC = 1
+_STATE_MSC = 2
+_STATE_FRAME = 3
+_STATE_TIME = 4
+_STATE_IO = 5
 _STATE_LEN = 8
+_LED_OK = 0
+_LED_UNSET = -1
 
 # GetInputSpec: 2048-point rFFT after /2 decimation from 48 kHz → ~24 kHz.
 # First 500 of 512 bins cover ~0–6 kHz; publish as if sample_rate=12 kHz.
@@ -78,6 +96,11 @@ _MSCPROT_LABELS = {0: "normal", 1: "low"}
 def linear_spectrum_to_db(bins: list[float]) -> list[float]:
     """Convert HamDRM GetSpectrum linear magnitudes to dB for the UI."""
     return [20.0 * math.log10(max(float(x), 0.0) + _EPS) for x in bins]
+
+
+def led_is_green(value: int) -> bool:
+    """EasyPal LED param: only ``0`` is green/OK (not yellow/red/unset)."""
+    return int(value) == _LED_OK
 
 
 class HamDrmBackend(TransferBackend):
@@ -302,7 +325,7 @@ class HamDrmBackend(TransferBackend):
         return int(self._config.waterfall.sample_rate or self._config.audio.sample_rate)
 
     def _pause_rx_for_pcm(self) -> None:
-        """Release WinMM capture so PortAudio can play WFTxt / Tune safely."""
+        """Release WinMM capture so WFTxt / Tune can play without fighting RX."""
         # Flag first so the GUI spectrum timer skips DLL calls mid-flight.
         # Do NOT StopThreads here — that has been segfaulting the x64 DLL mid-RX.
         self._rx_paused_for_pcm = True
@@ -357,21 +380,20 @@ class HamDrmBackend(TransferBackend):
             return
         self._set_ui_state(ui_state)
         self._pause_rx_for_pcm()
-        # WFTxt is encoded at waterfall.sample_rate (25 kHz); Tune PCM is at
-        # the device rate. Always pass the true rate of ``pcm`` — using the
-        # paint rate for Tune was pitch-shifting tones off the green markers.
+        # Play at the PCM's native rate via WinMM (no PortAudio, no 25→48 kHz
+        # resample). Waterfall scrolls from a TX tap of this same PCM.
         src_rate = int(pcm_sample_rate or self._pcm_sample_rate())
-        play_rate = int(self._config.audio.sample_rate)
         try:
             play_waterfall_pcm(
                 pcm,
                 sample_rate=src_rate,
-                play_sample_rate=play_rate,
-                output_device=self._config.audio.output_device,
+                play_sample_rate=src_rate,
+                output_device=None,
                 stop_event=stop_event,
                 event_bus=self._event_bus,
                 waterfall=self._config.waterfall,
                 spectrum_source="tx",
+                backend="winmm",
             )
         finally:
             self._resume_rx_after_pcm()
@@ -412,14 +434,15 @@ class HamDrmBackend(TransferBackend):
         if self._tuning or self._tx_busy or self._tx_active or self._wftxt_busy:
             raise RuntimeError("Transfer already in progress")
         if self._config.transfer.loopback_mode:
-            # Still play locally so operators can preview glyphs.
+            # Still play locally so operators can preview glyphs (WinMM, native rate).
             pcm = encode_waterfall_text(self._config, text)
             play_pcm_blocking(
                 pcm,
                 sample_rate=self._pcm_sample_rate(),
-                output_device=self._config.audio.output_device,
+                output_device=None,
                 event_bus=self._event_bus,
                 waterfall=self._config.waterfall,
+                play_sample_rate=self._pcm_sample_rate(),
             )
             self._event_bus.publish(LogEvent(level="info", message=f"WFTxt preview: {text}"))
             return
@@ -437,8 +460,15 @@ class HamDrmBackend(TransferBackend):
     def _run_waterfall_text(self, message: str) -> None:
         try:
             self._ptt_on()
+            self._wait_tx_while_qrm(stop_event=self._wftxt_stop)
+            if self._wftxt_stop.is_set():
+                return
             if self._should_play_callsign_header():
                 self._play_callsign_header(stop_event=self._wftxt_stop)
+            if self._wftxt_stop.is_set():
+                return
+            begin_cue = getattr(self._config.waterfall, "begin_wav", None)
+            self._play_tx_cue(begin_cue, stop_event=self._wftxt_stop)
             if self._wftxt_stop.is_set():
                 return
             self._event_bus.publish(WaterfallPaintStartedEvent(message=message))
@@ -450,9 +480,68 @@ class HamDrmBackend(TransferBackend):
             if self._wftxt_stop.is_set():
                 self._event_bus.publish(LogEvent(level="warning", message="WFTxt aborted"))
             else:
+                end_cue = getattr(self._config.waterfall, "end_wav", None)
+                self._play_tx_cue(end_cue, stop_event=self._wftxt_stop)
                 self._event_bus.publish(LogEvent(level="info", message="WFTxt complete"))
         except Exception as exc:  # noqa: BLE001
             self._event_bus.publish(LogEvent(level="error", message=f"WFTxt failed: {exc}"))
+        finally:
+            self._ptt_off()
+            self._wftxt_busy = False
+            self._set_ui_state(SessionState.IDLE)
+
+    def transmit_waterfall_image(self, image_path: Path) -> None:
+        """Paint a WFPic image on the waterfall via WinMM (same path as WFTxt)."""
+        path = Path(image_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"WFPic image not found: {path}")
+        if self._tuning or self._tx_busy or self._tx_active or self._wftxt_busy:
+            raise RuntimeError("Transfer already in progress")
+        if self._config.transfer.loopback_mode:
+            pcm = encode_waterfall_image(self._config, path)
+            play_pcm_blocking(
+                pcm,
+                sample_rate=self._pcm_sample_rate(),
+                output_device=None,
+                event_bus=self._event_bus,
+                waterfall=self._config.waterfall,
+                play_sample_rate=self._pcm_sample_rate(),
+            )
+            self._event_bus.publish(LogEvent(level="info", message=f"WFPic preview: {path.name}"))
+            return
+        self._require_lib()
+        self._wftxt_stop.clear()
+        self._wftxt_busy = True
+        self._wftxt_thread = threading.Thread(
+            target=self._run_waterfall_image,
+            args=(path,),
+            name="hamdrm-wfpic",
+            daemon=True,
+        )
+        self._wftxt_thread.start()
+
+    def _run_waterfall_image(self, image_path: Path) -> None:
+        try:
+            self._ptt_on()
+            self._wait_tx_while_qrm(stop_event=self._wftxt_stop)
+            if self._wftxt_stop.is_set():
+                return
+            if self._should_play_callsign_header():
+                self._play_callsign_header(stop_event=self._wftxt_stop)
+            if self._wftxt_stop.is_set():
+                return
+            self._event_bus.publish(WaterfallPaintStartedEvent(message=image_path.name))
+            self._event_bus.publish(LogEvent(level="info", message=f"WFPic TX: {image_path.name}"))
+            pcm = encode_waterfall_image(self._config, image_path)
+            if len(pcm) == 0:
+                raise RuntimeError("WFPic encoder produced no audio")
+            self._play_pcm_on_air(pcm, stop_event=self._wftxt_stop)
+            if self._wftxt_stop.is_set():
+                self._event_bus.publish(LogEvent(level="warning", message="WFPic aborted"))
+            else:
+                self._event_bus.publish(LogEvent(level="info", message="WFPic complete"))
+        except Exception as exc:  # noqa: BLE001
+            self._event_bus.publish(LogEvent(level="error", message=f"WFPic failed: {exc}"))
         finally:
             self._ptt_off()
             self._wftxt_busy = False
@@ -548,6 +637,7 @@ class HamDrmBackend(TransferBackend):
         *,
         percent_tx: int | None = None,
         seg_pos: int | None = None,
+        seg_total: int | None = None,
     ) -> None:
         """Publish sync LEDs / TX %.
 
@@ -559,10 +649,37 @@ class HamDrmBackend(TransferBackend):
             state = self.get_sync_state()
             cached_pct = percent_tx
             cached_seg = seg_pos
+            cached_tot = seg_total
             if cached_pct is None:
                 cached_pct = getattr(self, "_tx_progress_pct", None)
             if cached_seg is None:
                 cached_seg = getattr(self, "_tx_progress_seg", None)
+            if cached_tot is None:
+                cached_tot = getattr(self, "_tx_progress_seg_total", None)
+
+            rx_total = rx_ok = rx_pos = None
+            # RX segment strip via GetData (EasyPal Total / OK / Position).
+            if (
+                self._lib is not None
+                and self._rx_active
+                and not self._tx_active
+                and not self._rx_paused_for_pcm
+            ):
+                try:
+                    with self._lock:
+                        if self._lib is not None:
+                            tot = c_int(0)
+                            act = c_int(0)
+                            pos = c_int(0)
+                            self._lib.GetData(byref(tot), byref(act), byref(pos))
+                            rx_total = int(tot.value)
+                            rx_ok = int(act.value)
+                            rx_pos = int(pos.value)
+                            if rx_total <= 0 and rx_ok <= 0 and rx_pos <= 0:
+                                rx_total = rx_ok = rx_pos = None
+                except Exception:  # noqa: BLE001
+                    rx_total = rx_ok = rx_pos = None
+
             self._event_bus.publish(
                 SyncStatusEvent(
                     io=state.io,
@@ -577,10 +694,108 @@ class HamDrmBackend(TransferBackend):
                     mode=state.mode,
                     percent_tx=cached_pct,
                     seg_pos=cached_seg,
+                    seg_total=cached_tot,
+                    rx_total=rx_total,
+                    rx_ok=rx_ok,
+                    rx_pos=rx_pos,
                 )
             )
         except Exception:  # noqa: BLE001
             logger.debug("HamDRM sync publish failed", exc_info=True)
+
+    def _play_tx_cue(self, name: str | None, *, stop_event: threading.Event | None = None) -> None:
+        """Play an EasyPal program cue via WinMM (pauses RX briefly)."""
+        if not bool(getattr(self._config.transfer, "play_tx_cues", True)):
+            return
+        stem = (name or "").strip()
+        if not stem:
+            return
+        negative = bool(getattr(self._config.transfer, "cue_negative", False))
+        try:
+            self._pause_rx_for_pcm()
+            ok = play_program_cue(stem, negative=negative, stop_event=stop_event)
+            if ok:
+                self._event_bus.publish(
+                    LogEvent(level="info", message=f"Program cue: {stem}")
+                )
+        except Exception as exc:  # noqa: BLE001
+            self._event_bus.publish(
+                LogEvent(level="warning", message=f"Program cue '{stem}' failed: {exc}")
+            )
+        finally:
+            if not self._tx_active:
+                self._resume_rx_after_pcm()
+
+    def _wait_tx_while_qrm(self, stop_event: threading.Event | None = None) -> None:
+        """Delay TX while the channel looks busy (EasyPal Wait TX while QRM)."""
+        if not bool(getattr(self._config.transfer, "wait_tx_while_qrm", True)):
+            return
+        if self._config.transfer.loopback_mode:
+            return
+        timeout = float(getattr(self._config.transfer, "qrm_timeout_seconds", 8.0) or 8.0)
+        qrm_level = int(getattr(self._config.transfer, "qrm_level", 35))
+        qrm_snr = float(getattr(self._config.transfer, "qrm_snr_db", 2.0))
+        deadline = time.monotonic() + max(0.5, timeout)
+        announced = False
+        while time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                return
+            try:
+                with self._lock:
+                    if self._lib is None:
+                        return
+                    states = (c_int * _STATE_LEN)()
+                    self._lib.GetState(states)
+                    fac_ok = int(states[_STATE_FAC]) == _LED_OK
+                    snr_raw = float(self._lib.GetSNR())
+                    snr_db = snr_raw / 10.0 if fac_ok else None
+                    level = int(self._lib.GetLevel())
+            except Exception:  # noqa: BLE001
+                return
+            if not channel_looks_busy(
+                level=level,
+                snr_db=snr_db,
+                fac_locked=fac_ok,
+                qrm_level=qrm_level,
+                qrm_snr_db=qrm_snr,
+            ):
+                if announced:
+                    self._event_bus.publish(
+                        LogEvent(level="info", message="QRM cleared — starting TX")
+                    )
+                return
+            if not announced:
+                announced = True
+                self._event_bus.publish(
+                    LogEvent(
+                        level="info",
+                        message=(
+                            f"Wait TX while QRM (level={level}, "
+                            f"SNR={snr_db if snr_db is not None else '—'})"
+                        ),
+                    )
+                )
+                if bool(getattr(self._config.transfer, "play_tx_cues", True)):
+                    try:
+                        self._pause_rx_for_pcm()
+                        play_program_cue(
+                            "wait",
+                            negative=bool(
+                                getattr(self._config.transfer, "cue_negative", False)
+                            ),
+                            stop_event=stop_event,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    finally:
+                        self._resume_rx_after_pcm()
+            time.sleep(0.25)
+        self._event_bus.publish(
+            LogEvent(
+                level="warning",
+                message=f"QRM wait timed out after {timeout:.0f}s — TX anyway",
+            )
+        )
 
     def _poll_rx_loop(self) -> None:
         buf = create_string_buffer(260)
@@ -643,6 +858,15 @@ class HamDrmBackend(TransferBackend):
         )
         self._event_bus.publish(GalleryUpdatedEvent(image_id=entry.id, path=str(dest)))
         self._event_bus.publish(LogEvent(level="info", message=f"HamDRM RX complete: {dest.name}"))
+        try:
+            append_station_log(
+                direction="rx",
+                callsign=effective_callsign(self._config),
+                path=str(dest),
+                detail=dest.name,
+            )
+        except OSError as exc:
+            logger.warning("Station log RX entry failed: %s", exc)
         return True
 
     def transmit_file(self, path: Path) -> None:
@@ -675,7 +899,10 @@ class HamDrmBackend(TransferBackend):
         lib = self._require_lib()
         aborted = False
         try:
-            tx_path = prepare_hamdrm_tx_file(file_path)
+            tx_path = prepare_hamdrm_tx_file(
+                file_path,
+                embed_text=self._embed_txt_for_tx(),
+            )
             self._tx_gallery_path = tx_path
             src_kb = file_path.stat().st_size / 1024.0
             tx_kb = tx_path.stat().st_size / 1024.0
@@ -703,6 +930,15 @@ class HamDrmBackend(TransferBackend):
             # the callsign via SetCall.
             self._set_ui_state(SessionState.TX_ACTIVE)
             self._ptt_on()
+            self._wait_tx_while_qrm(stop_event=self._tx_abort)
+            if self._tx_abort.is_set():
+                aborted = True
+                return
+            begin_cue = getattr(self._config.waterfall, "begin_wav", None)
+            self._play_tx_cue(begin_cue, stop_event=self._tx_abort)
+            if self._tx_abort.is_set():
+                aborted = True
+                return
             if self._should_play_callsign_header():
                 self._event_bus.publish(
                     LogEvent(
@@ -738,6 +974,7 @@ class HamDrmBackend(TransferBackend):
                 self._tx_active = True
                 self._tx_progress_pct = 0
                 self._tx_progress_seg = 0
+                self._tx_progress_seg_total = 0
                 # Watchdog: native slideshow loops forever until ControlTX(False).
                 # ~2 MOT objects × payload; FM/64 ≈ 4.5 kbps, keep a generous ceiling.
                 rough_bps = 3500.0 if int(self._config.modem.hamdrm_qam) >= 64 else 2000.0
@@ -752,6 +989,7 @@ class HamDrmBackend(TransferBackend):
                 except Exception:  # noqa: BLE001
                     tot.value = 0
                 segs = int(tot.value)
+                self._tx_progress_seg_total = segs
                 self._event_bus.publish(
                     LogEvent(
                         level="info",
@@ -834,12 +1072,18 @@ class HamDrmBackend(TransferBackend):
         self._set_ui_state(SessionState.IDLE)
         gallery_path = self._tx_gallery_path
         self._tx_gallery_path = None
+        self._tx_progress_pct = None
+        self._tx_progress_seg = None
+        self._tx_progress_seg_total = None
         if aborted:
             self._event_bus.publish(
                 LogEvent(level="warning", message="HamDRM TX aborted — ready for next file")
             )
+            self._play_tx_cue("filefail", stop_event=None)
         else:
             self._event_bus.publish(LogEvent(level="info", message="HamDRM TX complete"))
+            end_cue = getattr(self._config.waterfall, "end_wav", None)
+            self._play_tx_cue(end_cue, stop_event=None)
             if gallery_path is not None and gallery_path.is_file():
                 try:
                     entry = self._gallery.add_image(
@@ -852,6 +1096,311 @@ class HamDrmBackend(TransferBackend):
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Gallery TX entry failed: %s", exc)
+            try:
+                append_station_log(
+                    direction="tx",
+                    callsign=effective_callsign(self._config),
+                    path=str(gallery_path) if gallery_path else "",
+                    detail="file TX complete",
+                )
+            except OSError as exc:
+                logger.warning("Station log TX entry failed: %s", exc)
+            if bool(getattr(self._config.transfer, "cw_id_after_tx", False)):
+                self._play_cw_id_after_tx()
+
+    def _embed_txt_for_tx(self) -> str | None:
+        if not bool(getattr(self._config.transfer, "embed_txt_enabled", False)):
+            return None
+        custom = str(getattr(self._config.transfer, "embed_txt_message", "") or "").strip()
+        return custom or effective_callsign(self._config)
+
+    def _play_cw_id_after_tx(self) -> None:
+        """End-of-TX CW ID via WinMM (EasyPal ID1200.wav)."""
+        try:
+            self._pause_rx_for_pcm()
+            ok = play_cw_id(tone_hz=1200, stop_event=self._tx_abort)
+            if ok:
+                self._event_bus.publish(LogEvent(level="info", message="CW ID (1200 Hz) sent"))
+                try:
+                    append_station_log(
+                        direction="cw",
+                        callsign=effective_callsign(self._config),
+                        detail="ID1200 after TX",
+                    )
+                except OSError:
+                    pass
+            else:
+                self._event_bus.publish(
+                    LogEvent(
+                        level="warning",
+                        message="CW ID WAV missing — copy EasyPal Transient\\ID1200.wav",
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001
+            self._event_bus.publish(LogEvent(level="warning", message=f"CW ID failed: {exc}"))
+        finally:
+            self._resume_rx_after_pcm()
+
+    def transmit_cw_id(self, *, tone_hz: int = 1200) -> None:
+        """Manual CW ID (Action → CW ID)."""
+        if self._tx_busy or self._tx_active or self._tuning or self._wftxt_busy:
+            raise RuntimeError("Transfer already in progress")
+        self._require_lib()
+
+        def _run() -> None:
+            try:
+                self._ptt_on()
+                self._pause_rx_for_pcm()
+                ok = play_cw_id(tone_hz=tone_hz)
+                if ok:
+                    self._event_bus.publish(
+                        LogEvent(level="info", message=f"CW ID ({tone_hz} Hz) complete")
+                    )
+                    append_station_log(
+                        direction="cw",
+                        callsign=effective_callsign(self._config),
+                        detail=f"ID{tone_hz} manual",
+                    )
+                else:
+                    self._event_bus.publish(
+                        LogEvent(level="warning", message="CW ID WAV not found")
+                    )
+            except Exception as exc:  # noqa: BLE001
+                self._event_bus.publish(LogEvent(level="error", message=f"CW ID failed: {exc}"))
+            finally:
+                self._resume_rx_after_pcm()
+                self._ptt_off()
+
+        threading.Thread(target=_run, name="hamdrm-cw-id", daemon=True).start()
+
+    def query_bsr(self) -> tuple[bool, int, str]:
+        """Call GetBSR — returns (has_missing, segment_count, filename_or_msg)."""
+        lib = self._require_lib()
+        self._apply_paths()
+        with self._lock:
+            num = c_int(0)
+            name_buf = create_string_buffer(260)
+            ok = bool(lib.GetBSR(byref(num), name_buf))
+            name = name_buf.value.decode("mbcs", errors="replace").strip("\x00 ")
+        return ok, int(num.value), name
+
+    def corrupt_dir(self) -> Path:
+        path = user_data_dir() / "corrupt"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def bsr_dir(self) -> Path:
+        path = user_data_dir() / "bsr"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def clear_bsr_files(self) -> int:
+        """Delete EasyPal-Next BSR scratch files (Del BSR)."""
+        removed = 0
+        folder = self.bsr_dir()
+        for path in folder.iterdir():
+            if path.is_file() and path.suffix.lower() in {".bin", ".bsr", ".tmp"}:
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+        self._event_bus.publish(
+            LogEvent(level="info", message=f"Del BSR — removed {removed} file(s)")
+        )
+        return removed
+
+    def send_bsr(self, *, fast: bool = False, instances: int = 1) -> None:
+        """Build a BSR request (GetBSR) and TX it via SendBSR + ControlTX."""
+        if self._tx_busy or self._tx_active or self._tuning or self._wftxt_busy:
+            raise RuntimeError("Transfer already in progress")
+        self._require_lib()
+        self._tx_abort.clear()
+        self._tx_busy = True
+
+        def _run() -> None:
+            aborted = False
+            started = False
+            try:
+                has_missing, segs, name = self.query_bsr()
+                if not has_missing or segs <= 0:
+                    self._event_bus.publish(
+                        LogEvent(
+                            level="info",
+                            message=f"FIX/BSR: nothing to request ({name or 'idle'})",
+                        )
+                    )
+                    return
+                self._event_bus.publish(
+                    LogEvent(
+                        level="info",
+                        message=(
+                            f"{'Fast BSR' if fast else 'BSR'} request: "
+                            f"{segs} missing seg(s) for {name}"
+                        ),
+                    )
+                )
+                self._set_ui_state(SessionState.TX_ACTIVE)
+                self._ptt_on()
+                self._wait_tx_while_qrm(stop_event=self._tx_abort)
+                if self._tx_abort.is_set():
+                    aborted = True
+                    return
+                self._play_tx_cue("bsr", stop_event=self._tx_abort)
+                if self._tx_abort.is_set():
+                    aborted = True
+                    return
+                with self._lock:
+                    if self._tx_abort.is_set():
+                        aborted = True
+                        return
+                    lib = self._require_lib()
+                    self._apply_tx_params()
+                    self._apply_paths()
+                    out_dev = self._audio_device_id("out")
+                    in_dev = self._audio_device_id("in")
+                    lib.SetAudDeviceOut(out_dev)
+                    self._ensure_rx_thread(in_dev)
+                    self._ensure_tx_thread(out_dev)
+                    if self._rx_active:
+                        try:
+                            lib.ControlRX(False)
+                        except OSError as exc:
+                            logger.warning("ControlRX(False) before BSR failed: %s", exc)
+                        self._rx_paused_for_pcm = True
+                    inst = max(1, min(4, int(instances)))
+                    if not lib.SendBSR(inst, 1 if fast else 0):
+                        raise RuntimeError("SendBSR failed")
+                    lib.ControlTX(True)
+                    self._tx_active = True
+                    started = True
+                    self._tx_progress_pct = 0
+                    self._tx_progress_seg = 0
+                    self._tx_progress_seg_total = 0
+                    self._tx_deadline = time.monotonic() + 120.0
+                    self._tx_pic_estimate = 1
+                    self._start_tx_poll()
+                while self._tx_active and not self._tx_abort.is_set():
+                    if self._tx_deadline and time.monotonic() >= self._tx_deadline:
+                        aborted = True
+                        break
+                    time.sleep(0.1)
+                if self._tx_abort.is_set() and self._tx_active:
+                    aborted = True
+            except Exception as exc:  # noqa: BLE001
+                self._event_bus.publish(
+                    LogEvent(level="error", message=f"BSR TX failed: {exc}")
+                )
+                aborted = True
+            finally:
+                if started:
+                    self._stop_file_tx(aborted=aborted)
+                else:
+                    self._tx_busy = False
+                    self._ptt_off()
+                    self._set_ui_state(SessionState.IDLE)
+
+        threading.Thread(target=_run, name="hamdrm-bsr-tx", daemon=True).start()
+
+    def answer_bsr(self, *, instances: int | None = None) -> None:
+        """Answer an incoming BSR request (readthebsrfile + writebsrselsegments)."""
+        if self._tx_busy or self._tx_active or self._tuning or self._wftxt_busy:
+            raise RuntimeError("Transfer already in progress")
+        self._require_lib()
+        self._tx_abort.clear()
+        self._tx_busy = True
+
+        def _run() -> None:
+            aborted = False
+            started = False
+            try:
+                lib = self._require_lib()
+                self._apply_paths()
+                with self._lock:
+                    name_buf = create_string_buffer(260)
+                    segno = c_int(0)
+                    ok = bool(lib.readthebsrfile(name_buf, byref(segno)))
+                    fname = name_buf.value.decode("mbcs", errors="replace").strip("\x00 ")
+                if not ok:
+                    self._event_bus.publish(
+                        LogEvent(
+                            level="warning",
+                            message="No BSR request to answer (or for another station)",
+                        )
+                    )
+                    return
+                segs = int(segno.value)
+                if instances is None:
+                    if segs < 3:
+                        inst = 4
+                    elif segs < 10:
+                        inst = 3
+                    elif segs < 50:
+                        inst = 2
+                    else:
+                        inst = 1
+                else:
+                    inst = max(1, min(4, int(instances)))
+                self._event_bus.publish(
+                    LogEvent(
+                        level="info",
+                        message=f"Answering BSR for {fname}: {segs} seg(s), {inst} instance(s)",
+                    )
+                )
+                self._set_ui_state(SessionState.TX_ACTIVE)
+                self._ptt_on()
+                self._wait_tx_while_qrm(stop_event=self._tx_abort)
+                if self._tx_abort.is_set():
+                    aborted = True
+                    return
+                self._play_tx_cue("bsr", stop_event=self._tx_abort)
+                with self._lock:
+                    if self._tx_abort.is_set():
+                        aborted = True
+                        return
+                    self._apply_tx_params()
+                    out_dev = self._audio_device_id("out")
+                    in_dev = self._audio_device_id("in")
+                    lib.SetAudDeviceOut(out_dev)
+                    self._ensure_rx_thread(in_dev)
+                    self._ensure_tx_thread(out_dev)
+                    if self._rx_active:
+                        try:
+                            lib.ControlRX(False)
+                        except OSError as exc:
+                            logger.warning("ControlRX(False) before answer BSR failed: %s", exc)
+                        self._rx_paused_for_pcm = True
+                    lib.writebsrselsegments(inst)
+                    lib.ControlTX(True)
+                    self._tx_active = True
+                    started = True
+                    self._tx_progress_pct = 0
+                    self._tx_progress_seg = 0
+                    self._tx_progress_seg_total = 0
+                    self._tx_deadline = time.monotonic() + max(120.0, segs * 2.0)
+                    self._tx_pic_estimate = 1
+                    self._start_tx_poll()
+                while self._tx_active and not self._tx_abort.is_set():
+                    if self._tx_deadline and time.monotonic() >= self._tx_deadline:
+                        aborted = True
+                        break
+                    time.sleep(0.1)
+                if self._tx_abort.is_set() and self._tx_active:
+                    aborted = True
+            except Exception as exc:  # noqa: BLE001
+                self._event_bus.publish(
+                    LogEvent(level="error", message=f"Answer BSR failed: {exc}")
+                )
+                aborted = True
+            finally:
+                if started:
+                    self._stop_file_tx(aborted=aborted)
+                else:
+                    self._tx_busy = False
+                    self._ptt_off()
+                    self._set_ui_state(SessionState.IDLE)
+
+        threading.Thread(target=_run, name="hamdrm-answer-bsr", daemon=True).start()
 
     def _start_tx_poll(self) -> None:
         self._stop_tx_poll()
@@ -915,6 +1464,7 @@ class HamDrmBackend(TransferBackend):
                 pct_v = int(peak_pct)
                 self._tx_progress_pct = pct_v
                 self._tx_progress_seg = seg_act
+                self._tx_progress_seg_total = seg_tot
 
                 self._event_bus.publish(
                     TransferProgressEvent(
@@ -923,7 +1473,9 @@ class HamDrmBackend(TransferBackend):
                         bytes_total=total_n,
                     )
                 )
-                self._publish_sync_status(percent_tx=pct_v, seg_pos=seg_act)
+                self._publish_sync_status(
+                    percent_tx=pct_v, seg_pos=seg_act, seg_total=seg_tot
+                )
 
                 now = time.monotonic()
                 if now - last_log >= 5.0:
@@ -1001,9 +1553,21 @@ class HamDrmBackend(TransferBackend):
                 return
 
             # EasyPal tune.wav / green markers: 720 + 1466 + 1840 Hz, ≤5 s.
-            out_rate = int(self._config.audio.sample_rate)
+            # Prefer the real cue WAV at its native 11025 Hz via WinMM (same path as WFTxt).
             max_s = min(5.0, float(self._config.transfer.tune_max_seconds))
-            tune_pcm = load_tune_pcm(out_rate, duration_s=max_s)
+            tune_path = resolve_tune_wav()
+            if tune_path is not None:
+                try:
+                    tune_pcm, tune_rate = load_wav_int16(tune_path)
+                    n = max(1, int(tune_rate * max_s))
+                    if len(tune_pcm) > n:
+                        tune_pcm = tune_pcm[:n]
+                except (OSError, ValueError):
+                    tune_pcm = load_tune_pcm(11025, duration_s=max_s)
+                    tune_rate = 11025
+            else:
+                tune_pcm = load_tune_pcm(11025, duration_s=max_s)
+                tune_rate = 11025
             self._event_bus.publish(
                 LogEvent(
                     level="info",
@@ -1014,7 +1578,7 @@ class HamDrmBackend(TransferBackend):
                 tune_pcm,
                 stop_event=self._tune_stop,
                 ui_state=SessionState.TUNING,
-                pcm_sample_rate=out_rate,
+                pcm_sample_rate=tune_rate,
             )
             if self._tune_stop.is_set():
                 self._event_bus.publish(LogEvent(level="warning", message="HamDRM Tune aborted"))
@@ -1126,14 +1690,15 @@ class HamDrmBackend(TransferBackend):
                 )
 
             return SyncState(
-                io=bool(states[_STATE_IO]),
-                time=bool(states[_STATE_TIME]),
-                frame=bool(states[_STATE_FRAME]),
-                fac=bool(states[_STATE_FAC]),
-                msc=bool(states[_STATE_MSC]),
-                snr_db=snr_db,
+                io=led_is_green(states[_STATE_IO]),
+                time=led_is_green(states[_STATE_TIME]),
+                frame=led_is_green(states[_STATE_FRAME]),
+                fac=led_is_green(states[_STATE_FAC]),
+                msc=led_is_green(states[_STATE_MSC]),
+                # SNR is only meaningful once FAC is locked (EasyPal green FAC).
+                snr_db=snr_db if led_is_green(states[_STATE_FAC]) else None,
                 level=int(level),
                 dc_freq=int(dc),
-                callsign=callsign,
-                mode=mode,
+                callsign=callsign if led_is_green(states[_STATE_FAC]) else "",
+                mode=mode if led_is_green(states[_STATE_FAC]) else "",
             )

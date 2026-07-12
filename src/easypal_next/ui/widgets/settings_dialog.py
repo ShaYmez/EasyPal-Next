@@ -205,6 +205,32 @@ class SettingsDialog(QDialog):
             "Tune tone, file transmit, or WFTxt body. Matches EasyPal on-air ID habit."
         )
 
+        self._cw_id_after_tx = QCheckBox("CW ID after successful file TX (EasyPal ID1200.wav)")
+        self._cw_id_after_tx.setChecked(bool(getattr(cfg.transfer, "cw_id_after_tx", False)))
+        self._embed_txt = QCheckBox("EmbedTxt on TX images (overlay callsign / custom text)")
+        self._embed_txt.setChecked(bool(getattr(cfg.transfer, "embed_txt_enabled", False)))
+        self._embed_txt_msg = QLineEdit(str(getattr(cfg.transfer, "embed_txt_message", "") or ""))
+        self._embed_txt_msg.setPlaceholderText("Blank = use station callsign")
+        self._play_tx_cues = QCheckBox("Play program cue WAVs around file TX / WFTxt (selected / fileok)")
+        self._play_tx_cues.setChecked(bool(getattr(cfg.transfer, "play_tx_cues", True)))
+        self._cue_negative = QCheckBox("Prefer negative (*-n.wav) program cues")
+        self._cue_negative.setChecked(bool(getattr(cfg.transfer, "cue_negative", False)))
+        self._wait_qrm = QCheckBox("Wait TX while QRM (delay when channel looks busy)")
+        self._wait_qrm.setChecked(bool(getattr(cfg.transfer, "wait_tx_while_qrm", True)))
+        self._qrm_level = QSpinBox()
+        self._qrm_level.setRange(1, 100)
+        self._qrm_level.setValue(int(getattr(cfg.transfer, "qrm_level", 35)))
+        self._qrm_snr = QDoubleSpinBox()
+        self._qrm_snr.setRange(0.0, 40.0)
+        self._qrm_snr.setDecimals(1)
+        self._qrm_snr.setSuffix(" dB")
+        self._qrm_snr.setValue(float(getattr(cfg.transfer, "qrm_snr_db", 2.0)))
+        self._qrm_timeout = QDoubleSpinBox()
+        self._qrm_timeout.setRange(1.0, 60.0)
+        self._qrm_timeout.setDecimals(0)
+        self._qrm_timeout.setSuffix(" s")
+        self._qrm_timeout.setValue(float(getattr(cfg.transfer, "qrm_timeout_seconds", 8.0)))
+
         form.addRow("Burst pace:", self._pace_ms)
         form.addRow("FEC chunk size:", self._fec_chunk)
         form.addRow("Speed preset:", self._fec_preset)
@@ -212,6 +238,15 @@ class SettingsDialog(QDialog):
         form.addRow("Radio emission:", self._radio_emission)
         form.addRow(self._auto_rx)
         form.addRow(self._callsign_header)
+        form.addRow(self._cw_id_after_tx)
+        form.addRow(self._embed_txt)
+        form.addRow("EmbedTxt message:", self._embed_txt_msg)
+        form.addRow(self._play_tx_cues)
+        form.addRow(self._cue_negative)
+        form.addRow(self._wait_qrm)
+        form.addRow("QRM level threshold:", self._qrm_level)
+        form.addRow("QRM SNR threshold:", self._qrm_snr)
+        form.addRow("QRM wait timeout:", self._qrm_timeout)
         form.addRow(
             QLabel(
                 "Tips: set pace to 0, use 4096-byte chunks, and disable "
@@ -442,6 +477,15 @@ class SettingsDialog(QDialog):
         self._wf_freq_max.setSuffix(" Hz")
         self._wf_freq_max.setValue(cfg.waterfall.freq_max_hz)
 
+        self._wf_begin_wav = QLineEdit(str(getattr(cfg.waterfall, "begin_wav", None) or ""))
+        self._wf_begin_wav.setPlaceholderText("selected")
+        self._wf_end_wav = QLineEdit(str(getattr(cfg.waterfall, "end_wav", None) or ""))
+        self._wf_end_wav.setPlaceholderText("fileok")
+        self._wf_cinema = QCheckBox("Cinema scroll (newest spectrum at bottom)")
+        self._wf_cinema.setChecked(bool(getattr(cfg.waterfall, "cinema_scroll", False)))
+        self._wf_slash_zeros = QCheckBox("Slash zeros in WFTxt (0 → Ø)")
+        self._wf_slash_zeros.setChecked(bool(getattr(cfg.waterfall, "slash_zeros", False)))
+
         form.addRow(self._wf_enabled)
         form.addRow(self._wf_live)
         form.addRow(self._wf_monitor)
@@ -452,11 +496,15 @@ class SettingsDialog(QDialog):
         form.addRow("FFT overlap:", self._wf_fft_overlap)
         form.addRow("History depth:", self._wf_history_rows)
         form.addRow("Scroll speed:", self._wf_scroll_pixels)
+        form.addRow(self._wf_cinema)
         form.addRow("Freq min:", self._wf_freq_min)
         form.addRow("Freq max:", self._wf_freq_max)
         form.addRow(QLabel("<b>WFTxt / file TX</b>"))
         form.addRow("Begin message:", self._wf_begin)
         form.addRow("End message:", self._wf_end)
+        form.addRow("Begin cue WAV:", self._wf_begin_wav)
+        form.addRow("End cue WAV:", self._wf_end_wav)
+        form.addRow(self._wf_slash_zeros)
         form.addRow("Font:", self._wf_font)
         form.addRow("Font size:", self._wf_font_size)
         form.addRow("Colormap:", self._wf_colormap)
@@ -546,6 +594,15 @@ class SettingsDialog(QDialog):
         config.transfer.radio_emission = self._radio_emission.currentData() or "fm"
         config.transfer.auto_rx = self._auto_rx.isChecked()
         config.transfer.require_callsign_wftxt_header = self._callsign_header.isChecked()
+        config.transfer.cw_id_after_tx = self._cw_id_after_tx.isChecked()
+        config.transfer.embed_txt_enabled = self._embed_txt.isChecked()
+        config.transfer.embed_txt_message = self._embed_txt_msg.text().strip()
+        config.transfer.play_tx_cues = self._play_tx_cues.isChecked()
+        config.transfer.cue_negative = self._cue_negative.isChecked()
+        config.transfer.wait_tx_while_qrm = self._wait_qrm.isChecked()
+        config.transfer.qrm_level = self._qrm_level.value()
+        config.transfer.qrm_snr_db = self._qrm_snr.value()
+        config.transfer.qrm_timeout_seconds = self._qrm_timeout.value()
         config.modem.engine = self._engine.currentData() or "hamdrm"
         dll_path = self._hamdrm_dll.text().strip()
         config.modem.hamdrm_dll_path = dll_path or None
@@ -605,6 +662,12 @@ class SettingsDialog(QDialog):
         config.waterfall.freq_max_hz = max(
             self._wf_freq_min.value() + 100, self._wf_freq_max.value()
         )
+        begin_wav = self._wf_begin_wav.text().strip()
+        end_wav = self._wf_end_wav.text().strip()
+        config.waterfall.begin_wav = begin_wav or None
+        config.waterfall.end_wav = end_wav or None
+        config.waterfall.cinema_scroll = self._wf_cinema.isChecked()
+        config.waterfall.slash_zeros = self._wf_slash_zeros.isChecked()
         config.ui.theme = "dark" if self._theme_dark.isChecked() else "light"
 
         save_config(config)

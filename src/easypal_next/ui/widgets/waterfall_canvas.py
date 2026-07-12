@@ -50,9 +50,15 @@ class WaterfallCanvas(QWidget):
             self._history = np.full((rows, cols), self._config.min_db - 30.0, dtype=np.float32)
 
         scroll = max(1, self._config.scroll_pixels)
-        self._history = np.roll(self._history, scroll, axis=0)
-        for i in range(scroll):
-            self._history[i] = row
+        if bool(getattr(self._config, "cinema_scroll", False)):
+            # EasyPal cinema: newest at bottom (scroll upward in buffer terms).
+            self._history = np.roll(self._history, -scroll, axis=0)
+            for i in range(scroll):
+                self._history[-(i + 1)] = row
+        else:
+            self._history = np.roll(self._history, scroll, axis=0)
+            for i in range(scroll):
+                self._history[i] = row
         self._active = True
         self.update()
 

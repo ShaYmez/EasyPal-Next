@@ -37,6 +37,15 @@ transfer:
   auto_rx: true
   require_callsign_wftxt_header: true
   callsign_header_gap_seconds: 1.0
+  cw_id_after_tx: false
+  embed_txt_enabled: false
+  embed_txt_message: ""
+  play_tx_cues: true
+  cue_negative: false
+  wait_tx_while_qrm: true
+  qrm_snr_db: 2.0
+  qrm_level: 35
+  qrm_timeout_seconds: 8.0
 
 fec:
   k: 16
@@ -48,16 +57,17 @@ waterfall:
   live_enabled: true
   sample_rate: 25000
   freq_min_hz: 100
-  freq_max_hz: 2500
+  freq_max_hz: 2700
   line_time_ms: 41.0
   line_repeats: 1
+  min_body_seconds: 3.2
   default_font: "Tahoma"
   default_font_size: 24
   negative_paint: false
   begin_message: "<< EASYPAL >>"
   end_message: ""
-  begin_wav: null
-  end_wav: null
+  begin_wav: "selected"
+  end_wav: "fileok"
   tx_monitor: true
   colormap: grayscale
   min_db: -60.0
@@ -68,6 +78,8 @@ waterfall:
   fft_overlap: 0.8
   history_rows: 512
   scroll_pixels: 1
+  cinema_scroll: false
+  slash_zeros: false
 
 network:
   enabled: true

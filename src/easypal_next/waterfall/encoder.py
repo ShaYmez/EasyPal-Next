@@ -10,7 +10,7 @@ from PIL import Image
 
 from easypal_next.config.schema import WaterfallConfig
 from easypal_next.waterfall.painter import WaterfallPainter
-from easypal_next.waterfall.text_renderer import render_text_bitmap
+from easypal_next.waterfall.text_renderer import paint_height_for_band, render_text_bitmap
 
 
 class SpectrumPainterEncoder(WaterfallPainter):
@@ -79,8 +79,9 @@ class SpectrumPainterEncoder(WaterfallPainter):
 
         audio = np.concatenate(pieces)
         peak = float(np.max(np.abs(audio)))
+        # EasyPal cue WAVs peak ~0.3 FS after u8→i16; 0.65 was too hot/harsh.
         if peak > 1e-9:
-            audio = audio * (0.65 / peak)
+            audio = audio * (0.35 / peak)
         return np.clip(audio * 32767.0, -32767, 32767).astype(np.int16)
 
     def text_to_audio(
@@ -103,7 +104,16 @@ class SpectrumPainterEncoder(WaterfallPainter):
         return self._bitmap_to_audio(bitmap)
 
     def image_to_audio(self, image_path: Path) -> np.ndarray:
-        return self._bitmap_to_audio(Image.open(image_path))
+        image = Image.open(image_path)
+        if image.mode != "L":
+            image = image.convert("L")
+        # Match WFTxt paint height band when the source is a tall photo.
+        target_h = paint_height_for_band(self._config.freq_min_hz, self._config.freq_max_hz)
+        if image.height != target_h:
+            ratio = target_h / float(max(1, image.height))
+            new_w = max(8, int(round(image.width * ratio)))
+            image = image.resize((new_w, target_h), Image.Resampling.LANCZOS)
+        return self._bitmap_to_audio(image)
 
     def save_wav(self, samples: np.ndarray, path: Path, sample_rate: int) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
