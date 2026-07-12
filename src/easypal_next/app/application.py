@@ -28,7 +28,19 @@ def run_application(argv: list[str] | None = None) -> int:
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
 
-    context.network_server.start()
+    # uvicorn + HamDRM (WinMM/MinGW DLL) currently segfaults on Windows when both
+    # run in-process. Keep the LAN gallery for FreeDV; HamDRM stays UI-local.
+    if getattr(context.transfer_backend, "engine_name", "") != "hamdrm":
+        context.network_server.start()
+    else:
+        from easypal_next.core.events import LogEvent
+
+        context.event_bus.publish(
+            LogEvent(
+                level="info",
+                message="LAN gallery deferred while HamDRM is active (stability)",
+            )
+        )
 
     window = MainWindow(context)
     if icon_path.is_file():

@@ -33,6 +33,26 @@ class SpectrumEvent:
     bins: list[float]
     sample_rate: int = 48000
     source: Literal["rx", "tx"] = "rx"
+    """Optional 0–100 input level (HamDRM GetLevel). None = derive from bins."""
+    level_pct: int | None = None
+
+
+@dataclass(frozen=True)
+class SyncStatusEvent:
+    """Periodic HamDRM sync / SNR snapshot for the UI."""
+
+    io: bool = False
+    time: bool = False
+    frame: bool = False
+    fac: bool = False
+    msc: bool = False
+    snr_db: float | None = None
+    level: int | None = None
+    dc_freq: int | None = None
+    callsign: str = ""
+    mode: str = ""
+    percent_tx: int | None = None
+    seg_pos: int | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +81,7 @@ Event = (
     | TransferProgressEvent
     | RxImageReadyEvent
     | SpectrumEvent
+    | SyncStatusEvent
     | SessionStateChangedEvent
     | WaterfallPaintStartedEvent
     | WaterfallTextReceivedEvent
@@ -80,6 +101,9 @@ class EventBus:
         for handler in self._subscribers[type(event)]:
             handler(event)
         if self._thread_queue is not None:
+            # Spectrum floods the WS hub and is useless on the phone gallery.
+            if type(event).__name__ == "SpectrumEvent":
+                return
             try:
                 self._thread_queue.put_nowait(event)
             except queue.Full:

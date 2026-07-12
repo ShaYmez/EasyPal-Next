@@ -159,6 +159,35 @@ QLabel#audioLevelLabel {
     font-size: 10px;
 }
 
+QLabel#spectrumAxis {
+    color: #888;
+    font-size: 10px;
+    font-family: Consolas, monospace;
+}
+
+QLabel#syncLedOff {
+    background: #2a3038;
+    color: #6e7681;
+    border-radius: 3px;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-weight: bold;
+}
+
+QLabel#syncLedOn {
+    background: #238636;
+    color: #ffffff;
+    border-radius: 3px;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-weight: bold;
+}
+
+QLabel#syncSnrLabel, QLabel#syncProfileLabel, QLabel#syncTxLabel {
+    color: #adbac7;
+    font-size: 11px;
+}
+
 QSplitter::handle {
     background: #1e4d8c;
 }

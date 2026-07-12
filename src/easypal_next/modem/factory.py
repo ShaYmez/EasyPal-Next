@@ -14,6 +14,7 @@ from easypal_next.modem.hamdrm_backend import HamDrmBackend
 from easypal_next.modem.interface import ModemInterface
 from easypal_next.modem.transfer_backend import TransferBackend
 from easypal_next.network.gallery_store import GalleryStore
+from easypal_next.radio.controller import RadioController
 
 
 @dataclass
@@ -35,13 +36,16 @@ def create_transfer_backend(
     event_bus: EventBus,
     gallery: GalleryStore,
     transfer_engine: TransferEngine,
+    radio: RadioController | None = None,
 ) -> TransferBackend:
     """Create the configured transfer backend.
 
     When ``modem.engine == \"hamdrm\"`` but the DLL cannot load (missing or wrong
     bitness), publishes a LogEvent warning and falls back to FreeDV for usability.
     """
-    selection = create_transfer_backend_selection(config, event_bus, gallery, transfer_engine)
+    selection = create_transfer_backend_selection(
+        config, event_bus, gallery, transfer_engine, radio=radio
+    )
     return selection.backend
 
 
@@ -50,10 +54,11 @@ def create_transfer_backend_selection(
     event_bus: EventBus,
     gallery: GalleryStore,
     transfer_engine: TransferEngine,
+    radio: RadioController | None = None,
 ) -> TransferBackendSelection:
     requested = config.modem.engine
     if requested == "hamdrm":
-        hamdrm = HamDrmBackend(config, event_bus, gallery)
+        hamdrm = HamDrmBackend(config, event_bus, gallery, radio=radio)
         if hamdrm.is_available():
             return TransferBackendSelection(
                 backend=hamdrm,

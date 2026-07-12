@@ -32,6 +32,9 @@ class TransferBackend(ABC):
     def transmit_file(self, path: Path) -> None: ...
 
     @abstractmethod
+    def transmit_waterfall_text(self, message: str) -> None: ...
+
+    @abstractmethod
     def start_tune(self) -> None: ...
 
     @abstractmethod

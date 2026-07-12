@@ -351,6 +351,28 @@ class TransferEngine:
             self._tx_modem.modem_sample_rate,
         )
 
+    def _play_callsign_header(self, loopback_buffer: list[np.ndarray]) -> None:
+        """On-air WFTxt callsign before file / WFTxt body (EasyPal habit)."""
+        if not self._config.transfer.require_callsign_wftxt_header:
+            return
+        if self._config.transfer.loopback_mode:
+            return
+        from easypal_next.modem.callsign_tx import (
+            build_callsign_wftxt_audio,
+            effective_callsign,
+        )
+
+        call = effective_callsign(self._config)
+        self._event_bus.publish(LogEvent(level="info", message=f"On-air callsign header: {call}"))
+        self._set_state(SessionState.TX_WATERFALL_HEADER)
+        header = build_callsign_wftxt_audio(self._config)
+        self._play_or_buffer(self._waterfall_to_modem(header), loopback_buffer)
+        gap = float(getattr(self._config.transfer, "callsign_header_gap_seconds", 1.0))
+        if gap > 0 and not self._abort.is_set():
+            rate = self._tx_modem.modem_sample_rate
+            silence = np.zeros(int(rate * gap), dtype=np.int16)
+            self._play_or_buffer(silence, loopback_buffer)
+
     def _play_or_buffer(self, audio: np.ndarray, loopback_buffer: list[np.ndarray]) -> None:
         self._feed_spectrum(audio)
         if self._config.transfer.loopback_mode:
@@ -386,6 +408,8 @@ class TransferEngine:
             loopback_buffer: list[np.ndarray] = []
             if not self._config.transfer.loopback_mode:
                 self._radio.ptt_on()
+
+            self._play_callsign_header(loopback_buffer)
 
             if self._config.waterfall.enabled:
                 self._set_state(SessionState.TX_WATERFALL_HEADER)
@@ -485,6 +509,7 @@ class TransferEngine:
                 self._radio.ptt_on()
 
             loopback_buffer: list[np.ndarray] = []
+            self._play_callsign_header(loopback_buffer)
             self._set_state(SessionState.TX_WATERFALL_HEADER)
             self._event_bus.publish(WaterfallPaintStartedEvent(message=message))
             header = self._waterfall.text_to_audio(

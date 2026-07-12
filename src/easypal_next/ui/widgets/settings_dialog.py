@@ -165,11 +165,11 @@ class SettingsDialog(QDialog):
         self._fec_preset.currentIndexChanged.connect(self._apply_fec_preset)
 
         self._tune_max_seconds = QSpinBox()
-        self._tune_max_seconds.setRange(5, 120)
+        self._tune_max_seconds.setRange(1, 5)
         self._tune_max_seconds.setSuffix(" s")
-        self._tune_max_seconds.setValue(cfg.transfer.tune_max_seconds)
+        self._tune_max_seconds.setValue(min(5, cfg.transfer.tune_max_seconds))
         self._tune_max_seconds.setToolTip(
-            "Maximum duration for on-air Tune (modem preamble loop). Press F8 or Tune again to stop early."
+            "Maximum duration for on-air Tune (720/1466/1840 Hz three-tone). Hard-capped at 5 s."
         )
 
         self._radio_emission = QComboBox()
@@ -193,12 +193,22 @@ class SettingsDialog(QDialog):
             "automatically without clicking Receive."
         )
 
+        self._callsign_header = QCheckBox(
+            "Transmit callsign as WFTxt before Tune / file TX / WFTxt (on-air)"
+        )
+        self._callsign_header.setChecked(cfg.transfer.require_callsign_wftxt_header)
+        self._callsign_header.setToolTip(
+            "Paints your callsign (or N0CALL if blank) on the waterfall before "
+            "Tune tone, file transmit, or WFTxt body. Matches EasyPal on-air ID habit."
+        )
+
         form.addRow("Burst pace:", self._pace_ms)
         form.addRow("FEC chunk size:", self._fec_chunk)
         form.addRow("Speed preset:", self._fec_preset)
         form.addRow("Tune timeout:", self._tune_max_seconds)
         form.addRow("Radio emission:", self._radio_emission)
         form.addRow(self._auto_rx)
+        form.addRow(self._callsign_header)
         form.addRow(
             QLabel(
                 "Tips: set pace to 0, use 4096-byte chunks, and disable "
@@ -532,6 +542,7 @@ class SettingsDialog(QDialog):
         config.transfer.tune_max_seconds = self._tune_max_seconds.value()
         config.transfer.radio_emission = self._radio_emission.currentData() or "fm"
         config.transfer.auto_rx = self._auto_rx.isChecked()
+        config.transfer.require_callsign_wftxt_header = self._callsign_header.isChecked()
         config.modem.engine = self._engine.currentData() or "hamdrm"
         dll_path = self._hamdrm_dll.text().strip()
         config.modem.hamdrm_dll_path = dll_path or None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -36,6 +36,7 @@ from easypal_next.ui.view_models.transfer_vm import TransferViewModel
 from easypal_next.ui.widgets.log_panel import LogPanel
 from easypal_next.ui.widgets.rx_pane import RxPane
 from easypal_next.ui.widgets.settings_dialog import SettingsDialog
+from easypal_next.ui.widgets.sync_status_strip import SyncStatusStrip
 from easypal_next.ui.widgets.waterfall_text_editor import WaterfallTextEditor
 from easypal_next.ui.widgets.waterfall_widget import WaterfallWidget
 
@@ -93,6 +94,10 @@ class MainWindow(QMainWindow):
         waterfall_layout.setContentsMargins(4, 4, 4, 4)
         self._waterfall = WaterfallWidget(context.event_bus, context.config.waterfall)
         waterfall_layout.addWidget(self._waterfall)
+        self._sync_strip = SyncStatusStrip(context.event_bus)
+        engine = getattr(context.transfer_backend, "engine_name", "")
+        self._sync_strip.setVisible(engine == "hamdrm" and not context.hamdrm_fell_back)
+        waterfall_layout.addWidget(self._sync_strip)
         main_splitter.addWidget(waterfall_box)
         main_splitter.setStretchFactor(0, 45)
         main_splitter.setStretchFactor(1, 55)
@@ -173,7 +178,23 @@ class MainWindow(QMainWindow):
             elif getattr(context.transfer_backend, "engine_name", "") == "hamdrm":
                 self.statusBar().showMessage("HamDRM engine active", 6000)
 
+        self._hamdrm_spec_timer = QTimer(self)
+        self._hamdrm_spec_timer.setInterval(150)
+        self._hamdrm_spec_timer.timeout.connect(self._poll_hamdrm_spectrum)
+        if getattr(context.transfer_backend, "engine_name", "") == "hamdrm":
+            self._hamdrm_spec_timer.start()
+
         self._fit_to_screen()
+
+    def _poll_hamdrm_spectrum(self) -> None:
+        """Fetch HamDRM GetSpectrum on the GUI thread (worker-thread calls segfault)."""
+        backend = self._context.transfer_backend
+        poll = getattr(backend, "poll_rx_spectrum", None)
+        if callable(poll):
+            try:
+                poll()
+            except Exception:
+                pass
 
     def _gallery_button(self, label: str, url: str) -> QPushButton:
         btn = QPushButton(label)
@@ -250,19 +271,26 @@ class MainWindow(QMainWindow):
                 if self._context.transfer_engine.state == SessionState.RX_LISTEN:
                     self._context.transfer_engine.abort()
 
+    def _is_tuning(self) -> bool:
+        if self._context.transfer_engine.state == SessionState.TUNING:
+            return True
+        return bool(getattr(self._context.transfer_backend, "is_tuning", False))
+
     def _update_tune_action_state(self) -> None:
         loopback = self._context.config.transfer.loopback_mode
         state = self._context.transfer_engine.state
-        tuning = state == SessionState.TUNING
-        self._actions.tune.setEnabled(
-            not loopback and state in (SessionState.IDLE, SessionState.TUNING)
-        )
+        tuning = self._is_tuning()
+        hamdrm = getattr(self._context.transfer_backend, "engine_name", "") == "hamdrm"
+        idle = state == SessionState.IDLE
+        self._actions.tune.setEnabled(not loopback and (tuning or idle))
         self._actions.tune.blockSignals(True)
         self._actions.tune.setChecked(tuning)
         self._actions.tune.blockSignals(False)
         emission = self._context.config.transfer.radio_emission.upper()
         if loopback:
             tip = "Tune requires on-air mode — disable loopback in Settings"
+        elif hamdrm:
+            tip = f"F8 — 1.5 kHz tone for drive/VOX ({emission}); HamDRM RX stays on WinMM"
         else:
             tip = f"F8 — loop modem preamble on-air ({emission}) to align audio levels"
         self._actions.tune.setToolTip(tip)
@@ -276,18 +304,28 @@ class MainWindow(QMainWindow):
                 "Tune is only available in on-air mode. Disable loopback in Settings and restart.",
             )
             return
-        state = self._context.transfer_engine.state
+        backend = self._context.transfer_backend
         if checked:
-            if state != SessionState.IDLE:
+            if self._is_tuning():
+                return
+            if (
+                getattr(backend, "engine_name", "") != "hamdrm"
+                and self._context.transfer_engine.state != SessionState.IDLE
+            ):
                 self._actions.tune.setChecked(False)
                 return
             try:
-                self._context.transfer_engine.start_tune()
+                backend.start_tune()
+                self._update_tune_action_state()
             except Exception as exc:
                 self._actions.tune.setChecked(False)
                 QMessageBox.critical(self, "Tune", str(exc))
-        elif state == SessionState.TUNING:
-            self._context.transfer_engine.stop_tune()
+        else:
+            try:
+                backend.stop_tune()
+            except Exception:
+                self._context.transfer_engine.stop_tune()
+            self._update_tune_action_state()
 
     def _fit_to_screen(self) -> None:
         screen = QApplication.primaryScreen()
@@ -329,21 +367,8 @@ class MainWindow(QMainWindow):
             )
         )
         listen = " · listening" if listening else ""
+        # Avoid extra HamDRM DLL calls here — sync strip / poll_rx_spectrum owns that.
         sync = ""
-        if backend_engine == "hamdrm" and not self._context.hamdrm_fell_back:
-            try:
-                s = self._context.transfer_backend.get_sync_state()
-                parts = []
-                if s.snr_db is not None:
-                    parts.append(f"SNR {s.snr_db:.0f} dB")
-                if s.fac:
-                    parts.append("FAC")
-                if s.msc:
-                    parts.append("MSC")
-                if parts:
-                    sync = " · " + " ".join(parts)
-            except Exception:
-                pass
         file_part = f" · {self._selected_file.name}" if self._selected_file else ""
         self._status_main.setText(
             f"{cfg.callsign} · {engine} · {cfg.modem.mode} · {mode} · {state}{listen}{sync}{file_part}"
@@ -455,6 +480,10 @@ class MainWindow(QMainWindow):
         if self._context.transfer_engine.state != SessionState.IDLE:
             QMessageBox.warning(self, "Send WFTxt", "Transfer already in progress.")
             return
+        backend = self._context.transfer_backend
+        if getattr(backend, "is_tuning", False):
+            QMessageBox.warning(self, "Send WFTxt", "Stop Tune first.")
+            return
         self._persist_waterfall_config()
         message = self._wftxt.begin_message()
         if not message.strip():
@@ -462,7 +491,8 @@ class MainWindow(QMainWindow):
             return
         self._wftxt.set_transmitting(True)
         try:
-            self._context.transfer_engine.start_waterfall_tx(message)
+            backend.transmit_waterfall_text(message)
+            self.statusBar().showMessage(f"WFTxt: {message}", 5000)
         except Exception as exc:
             self._wftxt.set_transmitting(False)
             QMessageBox.critical(self, "Send WFTxt", str(exc))
@@ -522,6 +552,9 @@ class MainWindow(QMainWindow):
 
     def _on_log(self, event: LogEvent) -> None:
         self.statusBar().showMessage(event.message, 6000)
+        if "Tune" in event.message:
+            self._update_tune_action_state()
+            self._update_status_text()
 
     def _on_progress(self, pct: float, done: int, total: int) -> None:
         visible = pct > 0 or total > 0
@@ -535,4 +568,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._context.transfer_engine.abort()
+        backend = self._context.transfer_backend
+        try:
+            if hasattr(backend, "shutdown"):
+                backend.shutdown()
+            else:
+                backend.abort()
+                backend.stop_rx()
+        except Exception:
+            pass
         super().closeEvent(event)

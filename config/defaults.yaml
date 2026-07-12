@@ -17,7 +17,7 @@ modem:
   engine: hamdrm
   hamdrm_dll_path: null
   hamdrm_mode: B
-  hamdrm_specocc: "2.5"
+  hamdrm_specocc: "2.3"
   hamdrm_mscprot: normal
   hamdrm_qam: 16
   hamdrm_interleave: short
@@ -32,9 +32,11 @@ radio:
 transfer:
   loopback_mode: true
   pace_ms: 0
-  tune_max_seconds: 30
+  tune_max_seconds: 5
   radio_emission: fm
   auto_rx: true
+  require_callsign_wftxt_header: true
+  callsign_header_gap_seconds: 1.0
 
 fec:
   k: 16
@@ -44,27 +46,28 @@ fec:
 waterfall:
   enabled: true
   live_enabled: true
-  sample_rate: 48000
+  sample_rate: 25000
   freq_min_hz: 100
   freq_max_hz: 2500
-  line_time_ms: 8.0
-  line_repeats: 2
-  default_font: "DejaVu Sans Mono"
-  default_font_size: 16
+  line_time_ms: 41.0
+  line_repeats: 1
+  default_font: "Tahoma"
+  default_font_size: 24
+  negative_paint: false
   begin_message: "<< EASYPAL >>"
   end_message: ""
   begin_wav: null
   end_wav: null
   tx_monitor: true
-  colormap: green
+  colormap: grayscale
   min_db: -60.0
   max_db: 0.0
   fft_size: 4096
-  fft_interval_ms: 30
+  fft_interval_ms: 50
   fft_window: hann
   fft_overlap: 0.8
   history_rows: 512
-  scroll_pixels: 5
+  scroll_pixels: 1
 
 network:
   enabled: true

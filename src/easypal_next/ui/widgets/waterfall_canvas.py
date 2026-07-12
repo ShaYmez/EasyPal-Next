@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from easypal_next.config.schema import WaterfallConfig
 from easypal_next.ui.waterfall_colormap import history_to_rgb
+from easypal_next.waterfall.cue_wav import TUNE_FREQS_HZ
 
 
 class WaterfallCanvas(QWidget):
@@ -55,6 +56,18 @@ class WaterfallCanvas(QWidget):
         self._active = True
         self.update()
 
+    def _draw_tune_markers(self, painter: QPainter) -> None:
+        lo = float(self._config.freq_min_hz)
+        hi = float(self._config.freq_max_hz)
+        span_hz = max(hi - lo, 1.0)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 220, 70))
+        for freq in TUNE_FREQS_HZ:
+            if freq < lo or freq > hi:
+                continue
+            x = int(round((float(freq) - lo) / span_hz * (self.width() - 1)))
+            painter.drawRect(x - 3, 0, 6, 6)
+
     def paintEvent(self, event) -> None:  # noqa: ANN001, N802
         del event
         painter = QPainter(self)
@@ -62,6 +75,7 @@ class WaterfallCanvas(QWidget):
         if not self._active or self._history is None:
             painter.setPen(QColor(136, 136, 136))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._idle_text)
+            self._draw_tune_markers(painter)
             return
 
         rgb = np.ascontiguousarray(history_to_rgb(self._history, self._config))
@@ -74,3 +88,4 @@ class WaterfallCanvas(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
         painter.drawImage(0, 0, scaled)
+        self._draw_tune_markers(painter)

@@ -58,6 +58,7 @@ class AppContext:
             self.event_bus,
             self.gallery,
             self.transfer_engine,
+            radio=self.radio,
         )
         self.transfer_backend: TransferBackend = selection.backend
         self.hamdrm_fell_back = selection.hamdrm_fell_back

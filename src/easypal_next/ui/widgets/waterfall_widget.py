@@ -6,12 +6,13 @@ import time
 from typing import Literal
 
 from PySide6.QtCore import Qt, Slot
-from PySide6.QtWidgets import QProgressBar, QSizePolicy, QVBoxLayout, QWidget, QLabel
+from PySide6.QtWidgets import QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from easypal_next.config.schema import WaterfallConfig
 from easypal_next.core.events import EventBus
 from easypal_next.core.session import SessionState
 from easypal_next.ui.spectrum_relay import SpectrumRelay
+from easypal_next.ui.widgets.spectrum_strip import SpectrumStrip
 from easypal_next.ui.widgets.waterfall_canvas import WaterfallCanvas
 
 _TX_SPECTRUM_STATES = frozenset(
@@ -68,10 +69,16 @@ class WaterfallWidget(QWidget):
         self._level_bar.setValue(0)
         self._level_bar.setTextVisible(False)
         self._level_bar.setFixedHeight(8)
-        self._level_bar.setToolTip("Input level (peak dB in band)")
+        self._level_bar.setToolTip("Input level (HamDRM GetLevel or peak dB in band)")
 
         self._level_label = QLabel("Input: —")
         self._level_label.setObjectName("audioLevelLabel")
+
+        self._strip = SpectrumStrip(config)
+        self._axis = QLabel()
+        self._axis.setObjectName("spectrumAxis")
+        self._axis.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._update_axis_label()
 
         self._canvas = WaterfallCanvas(config)
         self._update_idle_text()
@@ -85,6 +92,8 @@ class WaterfallWidget(QWidget):
         level_row.addWidget(self._level_bar)
         level_row.addWidget(self._level_label)
         layout.addLayout(level_row)
+        layout.addWidget(self._strip)
+        layout.addWidget(self._axis)
         layout.addWidget(self._canvas, stretch=1)
 
         self._relay = SpectrumRelay(event_bus, config.fft_interval_ms, self)
@@ -92,6 +101,10 @@ class WaterfallWidget(QWidget):
             self._append_spectrum,
             Qt.ConnectionType.QueuedConnection,
         )
+
+    def _update_axis_label(self) -> None:
+        # Hz numerals are painted on the spectrum strip (EasyPal 500…2500).
+        self._axis.setText("Hz  ·  green markers = Tune / pilot check")
 
     def set_live_enabled(self, enabled: bool) -> None:
         self._config.live_enabled = enabled
@@ -103,6 +116,7 @@ class WaterfallWidget(QWidget):
         self._active = False
         self._level_bar.setValue(0)
         self._level_label.setText("Input: —")
+        self._strip.reset()
         self._canvas.reset()
         self._update_idle_text()
 
@@ -111,7 +125,9 @@ class WaterfallWidget(QWidget):
         self._band_label.setText(
             f"{config.freq_min_hz}–{config.freq_max_hz} Hz · live spectrum"
         )
+        self._update_axis_label()
         self._relay.set_interval_ms(config.fft_interval_ms)
+        self._strip.update_config(config)
         self._canvas.update_config(config)
         if not config.live_enabled:
             self.reset_live()
@@ -169,18 +185,24 @@ class WaterfallWidget(QWidget):
             return bins
         return bins[i0 : i1 + 1]
 
-    def _update_level_meter(self, peak_db: float) -> None:
+    def _update_level_meter(self, peak_db: float, level_pct: int | None) -> None:
+        if level_pct is not None:
+            pct = max(0, min(100, int(level_pct)))
+            self._level_bar.setValue(pct)
+            self._level_label.setText(f"Input: {pct}%")
+            return
         pct = peak_db_to_level_pct(peak_db, self._config.min_db, self._config.max_db)
         self._level_bar.setValue(pct)
         self._level_label.setText(f"Input: {peak_db:.0f} dB")
 
-    @Slot(object, int, str, float)
+    @Slot(object, int, str, float, object)
     def _append_spectrum(
         self,
         bins: list[float],
         sample_rate: int,
         source: str,
         peak_db: float,
+        level_pct: object = None,
     ) -> None:
         if not bins or not self._config.live_enabled:
             return
@@ -189,7 +211,8 @@ class WaterfallWidget(QWidget):
 
         sliced = self._slice_bins(bins, sample_rate)
         band_peak = max(sliced) if sliced else peak_db
-        self._update_level_meter(band_peak)
+        pct = int(level_pct) if isinstance(level_pct, (int, float)) else None
+        self._update_level_meter(band_peak, pct)
 
         now = time.monotonic()
         min_interval = self._config.fft_interval_ms / 1000.0
@@ -200,6 +223,7 @@ class WaterfallWidget(QWidget):
         if not sliced:
             return
         self._active = True
+        self._strip.set_bins(sliced)
         self._canvas.append_row(sliced)
 
     def resizeEvent(self, event) -> None:  # noqa: ANN001, N802

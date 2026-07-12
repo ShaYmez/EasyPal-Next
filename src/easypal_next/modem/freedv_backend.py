@@ -42,6 +42,9 @@ class FreeDvBackend(TransferBackend):
     def transmit_file(self, path: Path) -> None:
         self._engine.start_tx(Path(path))
 
+    def transmit_waterfall_text(self, message: str) -> None:
+        self._engine.start_waterfall_tx(message)
+
     def start_tune(self) -> None:
         self._engine.start_tune()
 

@@ -13,7 +13,7 @@ from easypal_next.core.events import EventBus, SpectrumEvent
 class SpectrumRelay(QObject):
     """Coalesce spectrum rows and deliver them on the GUI thread."""
 
-    spectrum_received = Signal(object, int, str, float)
+    spectrum_received = Signal(object, int, str, float, object)
 
     def __init__(
         self,
@@ -45,5 +45,9 @@ class SpectrumRelay(QObject):
                 event = self._pending.popleft()
                 peak_db = max(event.bins) if event.bins else -120.0
                 self.spectrum_received.emit(
-                    event.bins, event.sample_rate, event.source, peak_db
+                    event.bins,
+                    event.sample_rate,
+                    event.source,
+                    peak_db,
+                    event.level_pct,
                 )
