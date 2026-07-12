@@ -35,6 +35,7 @@ from easypal_next.modem.interface import ModemInterface
 from easypal_next.network.gallery_store import GalleryStore
 from easypal_next.radio.controller import RadioController
 from easypal_next.waterfall.encoder import SpectrumPainterEncoder
+from easypal_next.waterfall.tx_pcm import encode_waterfall_text
 
 
 @dataclass
@@ -415,11 +416,7 @@ class TransferEngine:
                 self._set_state(SessionState.TX_WATERFALL_HEADER)
                 msg = self._config.waterfall.begin_message.format(callsign=self._config.callsign)
                 self._event_bus.publish(WaterfallPaintStartedEvent(message=msg))
-                header = self._waterfall.text_to_audio(
-                    msg,
-                    font=self._config.waterfall.default_font,
-                    font_size=self._config.waterfall.default_font_size,
-                )
+                header = encode_waterfall_text(self._config, msg)
                 self._play_or_buffer(self._waterfall_to_modem(header), loopback_buffer)
 
             self._set_state(SessionState.TX_ACTIVE)
@@ -449,10 +446,9 @@ class TransferEngine:
 
             if self._config.waterfall.enabled and self._config.waterfall.end_message:
                 self._set_state(SessionState.TX_WATERFALL_FOOTER)
-                footer = self._waterfall.text_to_audio(
+                footer = encode_waterfall_text(
+                    self._config,
                     self._config.waterfall.end_message.format(callsign=self._config.callsign),
-                    font=self._config.waterfall.default_font,
-                    font_size=self._config.waterfall.default_font_size,
                 )
                 self._play_or_buffer(self._waterfall_to_modem(footer), loopback_buffer)
 
@@ -512,11 +508,7 @@ class TransferEngine:
             self._play_callsign_header(loopback_buffer)
             self._set_state(SessionState.TX_WATERFALL_HEADER)
             self._event_bus.publish(WaterfallPaintStartedEvent(message=message))
-            header = self._waterfall.text_to_audio(
-                message,
-                font=self._config.waterfall.default_font,
-                font_size=self._config.waterfall.default_font_size,
-            )
+            header = encode_waterfall_text(self._config, message)
             self._play_or_buffer(self._waterfall_to_modem(header), loopback_buffer)
 
             if self._config.transfer.loopback_mode and loopback_buffer:

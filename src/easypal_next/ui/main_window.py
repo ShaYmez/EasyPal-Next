@@ -624,6 +624,9 @@ class MainWindow(QMainWindow):
         if getattr(backend, "is_tuning", False):
             QMessageBox.warning(self, "Send WFTxt", "Stop Tune first.")
             return
+        if getattr(backend, "_wftxt_busy", False) or getattr(backend, "_tx_busy", False):
+            QMessageBox.warning(self, "Send WFTxt", "Transfer already in progress.")
+            return
         self._persist_waterfall_config()
         message = self._wftxt.begin_message()
         if not message.strip():

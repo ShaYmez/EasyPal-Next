@@ -71,11 +71,6 @@ class WaterfallPaintStartedEvent:
 
 
 @dataclass(frozen=True)
-class WaterfallTextReceivedEvent:
-    text: str
-
-
-@dataclass(frozen=True)
 class GalleryUpdatedEvent:
     image_id: str
     path: str
@@ -89,7 +84,6 @@ Event = (
     | SyncStatusEvent
     | SessionStateChangedEvent
     | WaterfallPaintStartedEvent
-    | WaterfallTextReceivedEvent
     | GalleryUpdatedEvent
 )
 

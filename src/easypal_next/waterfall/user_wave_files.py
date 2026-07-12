@@ -6,9 +6,6 @@ from pathlib import Path
 
 from easypal_next.app.paths import user_data_dir
 
-_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".jp2"}
-_WAV_SUFFIXES = {".wav"}
-
 
 def easypal_user_wave_dirs(*, cinema_scroll: bool = False) -> list[Path]:
     """Return UserWaveFiles search dirs.
@@ -44,25 +41,3 @@ def default_wfpic_start_dir(*, cinema_scroll: bool = False) -> Path | None:
         if folder.is_dir():
             return folder
     return None
-
-
-def list_user_wave_images(*, cinema_scroll: bool = False) -> list[Path]:
-    found: list[Path] = []
-    for folder in easypal_user_wave_dirs(cinema_scroll=cinema_scroll):
-        if not folder.is_dir():
-            continue
-        for path in sorted(folder.iterdir()):
-            if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES:
-                found.append(path)
-    return found
-
-
-def list_user_wave_wavs(*, cinema_scroll: bool = False) -> list[Path]:
-    found: list[Path] = []
-    for folder in easypal_user_wave_dirs(cinema_scroll=cinema_scroll):
-        if not folder.is_dir():
-            continue
-        for path in sorted(folder.iterdir()):
-            if path.is_file() and path.suffix.lower() in _WAV_SUFFIXES:
-                found.append(path)
-    return found

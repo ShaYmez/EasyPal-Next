@@ -44,6 +44,18 @@ def test_short_wftxt_stretched_to_cue_duration():
     assert dur <= 4.5
 
 
+def test_encode_waterfall_text_slash_zeros_changes_audio():
+    plain = encode_waterfall_text(
+        AppConfig(waterfall=WaterfallConfig(slash_zeros=False)),
+        "M0VUB 00",
+    )
+    slashed = encode_waterfall_text(
+        AppConfig(waterfall=WaterfallConfig(slash_zeros=True)),
+        "M0VUB 00",
+    )
+    assert not np.array_equal(plain, slashed)
+
+
 def test_compare_json_targets_present():
     data = json.loads(FIXTURE.read_text(encoding="utf-8"))
     assert data["targets"]["paint_hz_per_pixel"] == 12.0
