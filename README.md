@@ -6,7 +6,7 @@
 
 **An open-source digital SSTV application — built in memory of Erik Sundstrup (VK4AES / VK4ESK, SK).**
 
-EasyPal brought error-corrected image and file transfer to amateur radio. When Erik became a silent key, development of the closed-source EasyPal ended. EasyPal-Next continues that legacy as a modern, patent-free, community-maintained successor.
+EasyPal brought error-corrected image and file transfer to amateur radio. When Erik became a silent key, development of the closed-source EasyPal ended. EasyPal-Next continues that legacy as a modern, patent-free, community-maintained app.
 
 ## Features (v0.2.0)
 
@@ -30,7 +30,7 @@ On-air testing: see [docs/on-air-test.md](docs/on-air-test.md).
 
 ## Brand
 
-Cartoon-style logo in **royal blue**, **golden yellow**, and **white**. Assets in [`resources/brand/`](resources/brand/) (see [brand README](resources/brand/README.md)).
+Logo in **royal blue**, **golden yellow**, and **white**. Assets in [`resources/brand/`](resources/brand/) (see [brand README](resources/brand/README.md)).
 
 ## Download / install (release)
 
@@ -139,4 +139,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## In memory
 
-Dedicated to **Erik Sundstrup VK4AES (VK4ESK)**, creator of EasyPal, whose work inspired a generation of digital SSTV operators. Open source keeps it alive for many years to come.
+Dedicated to **Erik Sundstrup VK4AES (VK4ESK)**, creator of EasyPal, whose work inspired a generation of digital SSTV operators. Open source keeps it alive for many years to come. Credit goes to all who helped build the originl version.
