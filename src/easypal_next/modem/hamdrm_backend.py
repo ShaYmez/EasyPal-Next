@@ -120,6 +120,7 @@ class HamDrmBackend(TransferBackend):
         self._tx_progress_pct: int | None = None
         self._tx_progress_seg: int | None = None
         self._tx_deadline = 0.0
+        self._tx_gallery_path: Path | None = None
 
     @property
     def engine_name(self) -> str:
@@ -607,14 +608,15 @@ class HamDrmBackend(TransferBackend):
                     if got:
                         name = buf.value.decode("mbcs", errors="replace").strip()
                         if name and name not in self._seen_rx:
-                            self._seen_rx.add(name)
-                            self._ingest_rx_file(name)
+                            if self._ingest_rx_file(name):
+                                self._seen_rx.add(name)
             except Exception as exc:  # noqa: BLE001 — keep poll alive
                 self._event_bus.publish(
                     LogEvent(level="error", message=f"HamDRM RX poll error: {exc}")
                 )
 
-    def _ingest_rx_file(self, name: str) -> None:
+    def _ingest_rx_file(self, name: str) -> bool:
+        """Copy RX file into gallery. Returns True only after a successful add."""
         src = Path(name)
         if not src.is_file():
             candidate = self._gallery.received_dir() / Path(name).name
@@ -622,9 +624,12 @@ class HamDrmBackend(TransferBackend):
                 src = candidate
             else:
                 self._event_bus.publish(
-                    LogEvent(level="warning", message=f"HamDRM GetFileRX reported missing file: {name}")
+                    LogEvent(
+                        level="warning",
+                        message=f"HamDRM GetFileRX reported missing file: {name}",
+                    )
                 )
-                return
+                return False
         dest_dir = self._gallery.received_dir()
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / src.name
@@ -638,6 +643,7 @@ class HamDrmBackend(TransferBackend):
         )
         self._event_bus.publish(GalleryUpdatedEvent(image_id=entry.id, path=str(dest)))
         self._event_bus.publish(LogEvent(level="info", message=f"HamDRM RX complete: {dest.name}"))
+        return True
 
     def transmit_file(self, path: Path) -> None:
         lib = self._require_lib()
@@ -670,6 +676,7 @@ class HamDrmBackend(TransferBackend):
         aborted = False
         try:
             tx_path = prepare_hamdrm_tx_file(file_path)
+            self._tx_gallery_path = tx_path
             src_kb = file_path.stat().st_size / 1024.0
             tx_kb = tx_path.stat().st_size / 1024.0
             # Handbook MSC rates (Mode B/2.5/norm/16 ≈ 2.3 kbps).
@@ -825,12 +832,26 @@ class HamDrmBackend(TransferBackend):
                 logger.warning("ControlRX(True) after TX failed: %s", exc)
         self._clear_transfer_progress()
         self._set_ui_state(SessionState.IDLE)
+        gallery_path = self._tx_gallery_path
+        self._tx_gallery_path = None
         if aborted:
             self._event_bus.publish(
                 LogEvent(level="warning", message="HamDRM TX aborted — ready for next file")
             )
         else:
             self._event_bus.publish(LogEvent(level="info", message="HamDRM TX complete"))
+            if gallery_path is not None and gallery_path.is_file():
+                try:
+                    entry = self._gallery.add_image(
+                        gallery_path,
+                        callsign=effective_callsign(self._config),
+                        direction="tx",
+                    )
+                    self._event_bus.publish(
+                        GalleryUpdatedEvent(image_id=entry.id, path=str(gallery_path))
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Gallery TX entry failed: %s", exc)
 
     def _start_tx_poll(self) -> None:
         self._stop_tx_poll()

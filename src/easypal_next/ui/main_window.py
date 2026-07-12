@@ -78,6 +78,12 @@ class MainWindow(QMainWindow):
         transfer_layout.addLayout(gallery_row)
         transfer_box.setMaximumHeight(80)
         root.addWidget(transfer_box)
+        self._gallery_ready_timer = QTimer(self)
+        self._gallery_ready_timer.setInterval(500)
+        self._gallery_ready_timer.timeout.connect(self._refresh_gallery_availability)
+        self._gallery_ready_timer.start()
+        self._refresh_gallery_availability()
+
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_splitter.setChildrenCollapsible(False)
@@ -201,15 +207,34 @@ class MainWindow(QMainWindow):
         btn.setObjectName("galleryButton")
         btn.setToolTip(url)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+        btn.clicked.connect(self._open_gallery)
         return btn
+
+    def _open_gallery(self) -> None:
+        server = self._context.network_server
+        if not getattr(server, "is_running", False):
+            QMessageBox.information(
+                self,
+                "Gallery",
+                "LAN gallery is not running yet.\n"
+                "Wait a moment after startup, or check Preferences → Network.",
+            )
+            return
+        QDesktopServices.openUrl(QUrl(self._gallery_url))
+
+    def _refresh_gallery_availability(self) -> None:
+        ready = bool(getattr(self._context.network_server, "is_running", False))
+        self._gallery_btn.setEnabled(ready)
+        self._actions.open_gallery.setEnabled(ready)
+        tip = self._gallery_url if ready else "LAN gallery starting…"
+        self._gallery_btn.setToolTip(tip)
+        self._actions.open_gallery.setToolTip(tip)
 
     def _build_status_bar(self) -> None:
         bar = QStatusBar()
         self.setStatusBar(bar)
         self._status_main = QLabel()
         bar.addWidget(self._status_main, stretch=1)
-        bar.addPermanentWidget(self._gallery_button("Open Gallery", self._gallery_url))
 
     def _connect_actions(self) -> None:
         a = self._actions
@@ -226,9 +251,7 @@ class MainWindow(QMainWindow):
         a.auto_rx.toggled.connect(self._on_auto_rx_toggled)
         a.theme_light.triggered.connect(lambda: self._set_theme("light"))
         a.theme_dark.triggered.connect(lambda: self._set_theme("dark"))
-        a.open_gallery.triggered.connect(
-            lambda: QDesktopServices.openUrl(QUrl(self._gallery_url))
-        )
+        a.open_gallery.triggered.connect(self._open_gallery)
         a.about.triggered.connect(self._show_about)
         self._wftxt.send_requested.connect(self._send_wftxt)
 
@@ -580,6 +603,7 @@ class MainWindow(QMainWindow):
         self._rx_pane.add_entry(event.image_id)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        self._gallery_ready_timer.stop()
         self._context.transfer_engine.abort()
         backend = self._context.transfer_backend
         try:
@@ -590,4 +614,9 @@ class MainWindow(QMainWindow):
                 backend.stop_rx()
         except Exception:
             pass
+        try:
+            self._context.network_server.stop()
+        except Exception:
+            pass
         super().closeEvent(event)
+

@@ -62,12 +62,18 @@ function scheduleGalleryRefresh() {
   refreshTimer = setTimeout(async () => {
     await refreshGallery();
     scheduleGalleryRefresh();
-  }, 5000);
+  }, 2500);
 }
 
 function connectEvents() {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const socket = new WebSocket(`${protocol}://${location.host}/ws/v1/events`);
+  let socket;
+  try {
+    socket = new WebSocket(`${protocol}://${location.host}/ws/v1/events`);
+  } catch (err) {
+    console.warn("live events unavailable; using poll only", err);
+    return;
+  }
 
   socket.addEventListener("message", async (event) => {
     const data = JSON.parse(event.data);
@@ -83,14 +89,16 @@ function connectEvents() {
     }
   });
 
+  // Subprocess gallery has no WebSocket; don't hammer reconnect — REST poll covers updates.
   socket.addEventListener("close", () => {
-    setTimeout(connectEvents, 2000);
+    console.warn("live events closed; gallery will refresh via poll");
   });
 
   socket.addEventListener("error", () => {
     socket.close();
   });
 }
+
 
 async function init() {
   const status = await fetchStatus();

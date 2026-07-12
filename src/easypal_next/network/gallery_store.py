@@ -31,18 +31,34 @@ def _is_image_path(path: Path) -> bool:
 
 
 class GalleryStore:
-    def __init__(self, gallery_dir: Path, received_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        gallery_dir: Path,
+        received_dir: Path | None = None,
+        *,
+        reload_from_disk: bool = False,
+    ) -> None:
         self._dir = gallery_dir
         self._dir.mkdir(parents=True, exist_ok=True)
         self._received_dir = Path(received_dir).expanduser() if received_dir else None
         self._index_path = self._dir / "index.json"
+        self._reload_from_disk = reload_from_disk
         self._entries: list[GalleryEntry] = self._load()
 
     def _load(self) -> list[GalleryEntry]:
         if not self._index_path.is_file():
             return []
-        data = json.loads(self._index_path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(self._index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("gallery index read failed: %s", exc)
+            return list(self._entries) if hasattr(self, "_entries") else []
         return [GalleryEntry(**item) for item in data]
+
+    def _maybe_reload(self) -> None:
+        if self._reload_from_disk:
+            self._entries = self._load()
+
 
     def _save(self) -> None:
         self._index_path.write_text(
@@ -116,13 +132,16 @@ class GalleryStore:
         return entry
 
     def list_entries(self, limit: int = 50, direction: str | None = None) -> list[GalleryEntry]:
+        self._maybe_reload()
         items = self._entries
         if direction:
             items = [e for e in items if e.direction == direction]
         return items[:limit]
 
     def get_entry(self, image_id: str) -> GalleryEntry | None:
+        self._maybe_reload()
         for entry in self._entries:
             if entry.id == image_id:
                 return entry
         return None
+
