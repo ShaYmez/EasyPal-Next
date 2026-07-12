@@ -83,7 +83,14 @@ class SpectrumPainterEncoder(WaterfallPainter):
             audio = audio * (0.65 / peak)
         return np.clip(audio * 32767.0, -32767, 32767).astype(np.int16)
 
-    def text_to_audio(self, text: str, *, font: str, font_size: int) -> np.ndarray:
+    def text_to_audio(
+        self,
+        text: str,
+        *,
+        font: str,
+        font_size: int,
+        min_columns: int = 80,
+    ) -> np.ndarray:
         bitmap = render_text_bitmap(
             text,
             font_name=font,
@@ -91,6 +98,7 @@ class SpectrumPainterEncoder(WaterfallPainter):
             freq_min_hz=self._config.freq_min_hz,
             freq_max_hz=self._config.freq_max_hz,
             negative=bool(getattr(self._config, "negative_paint", False)),
+            min_columns=min_columns,
         )
         return self._bitmap_to_audio(bitmap)
 

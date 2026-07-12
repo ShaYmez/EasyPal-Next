@@ -523,6 +523,12 @@ class MainWindow(QMainWindow):
             self._context.transfer_backend.abort()
         except Exception:
             self._context.transfer_engine.abort()
+        self._progress.setValue(0)
+        self._progress.setVisible(False)
+        self._wftxt.set_transmitting(False)
+        self._update_tune_action_state()
+        self._update_status_text()
+        self.statusBar().showMessage("Aborted — idle", 4000)
 
     def _show_about(self) -> None:
         logo = brand_logo_path()
@@ -543,6 +549,8 @@ class MainWindow(QMainWindow):
         )
         if state == SessionState.IDLE:
             self._wftxt.set_transmitting(False)
+            self._progress.setValue(0)
+            self._progress.setVisible(False)
         self._update_tune_action_state()
         self._update_status_text()
         self.statusBar().showMessage(f"State → {state.value}", 4000)
@@ -557,11 +565,16 @@ class MainWindow(QMainWindow):
             self._update_status_text()
 
     def _on_progress(self, pct: float, done: int, total: int) -> None:
-        visible = pct > 0 or total > 0
-        self._progress.setVisible(visible)
-        self._progress.setValue(int(pct))
-        if visible:
-            self.statusBar().showMessage(f"Progress: {done}/{total} ({pct:.1f}%)", 3000)
+        if total <= 0 and pct <= 0:
+            self._progress.setValue(0)
+            self._progress.setVisible(False)
+            return
+        self._progress.setVisible(True)
+        self._progress.setValue(int(max(0.0, min(100.0, pct))))
+        # HamDRM reports MOT segment units across the full transfer (not file bytes).
+        self.statusBar().showMessage(
+            f"TX progress: {done}/{total} segments ({pct:.0f}%)", 3000
+        )
 
     def _on_gallery_updated(self, event: GalleryUpdatedEvent) -> None:
         self._rx_pane.add_entry(event.image_id)

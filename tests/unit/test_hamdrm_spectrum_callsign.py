@@ -41,5 +41,18 @@ def test_require_callsign_header_default_true():
     assert AppConfig().transfer.require_callsign_wftxt_header is True
 
 
+def test_drm_callsign_requires_letter_and_digit():
+    from easypal_next.core.events import EventBus
+    from easypal_next.modem.hamdrm_backend import HamDrmBackend
+    from unittest.mock import MagicMock
+
+    backend = HamDrmBackend(AppConfig(), EventBus(), MagicMock(), MagicMock())
+    assert backend._drm_callsign_ok("N0CALL")
+    assert backend._drm_callsign_ok("M0VUB")
+    assert not backend._drm_callsign_ok("NOCALL")
+    assert not backend._drm_callsign_ok("TEST")
+    assert not backend._drm_callsign_ok("")
+
+
 def test_hamdrm_specocc_default_23():
     assert AppConfig().modem.hamdrm_specocc == "2.3"

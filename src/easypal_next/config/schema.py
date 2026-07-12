@@ -60,7 +60,7 @@ class ModemConfig(BaseModel):
     hamdrm_interleave: Literal["short", "long"] = "short"
     hamdrm_dc_freq: int = 350
     """Lead-in / start delay symbols (EasyPal default profile uses 24)."""
-    hamdrm_start_delay: int = 24
+    hamdrm_start_delay: int = 12
 
 
 class FecConfig(BaseModel):

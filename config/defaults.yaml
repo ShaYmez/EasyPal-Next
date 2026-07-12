@@ -22,7 +22,7 @@ modem:
   hamdrm_qam: 16
   hamdrm_interleave: short
   hamdrm_dc_freq: 350
-  hamdrm_start_delay: 24
+  hamdrm_start_delay: 12
 
 radio:
   profile: "vox"

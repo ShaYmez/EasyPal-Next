@@ -14,12 +14,18 @@ from easypal_next.waterfall.cue_wav import resample_int16
 from easypal_next.waterfall.encoder import SpectrumPainterEncoder
 
 
-def encode_waterfall_text(config: AppConfig, text: str) -> np.ndarray:
+def encode_waterfall_text(
+    config: AppConfig,
+    text: str,
+    *,
+    min_columns: int = 80,
+) -> np.ndarray:
     encoder = SpectrumPainterEncoder(config.waterfall)
     return encoder.text_to_audio(
         text,
         font=config.waterfall.default_font,
         font_size=config.waterfall.default_font_size,
+        min_columns=min_columns,
     )
 
 

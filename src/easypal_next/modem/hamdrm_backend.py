@@ -47,6 +47,7 @@ from easypal_next.modem.hamdrm_api import (
 from easypal_next.modem.transfer_backend import SyncState, TransferBackend
 from easypal_next.network.gallery_store import GalleryStore
 from easypal_next.radio.controller import RadioController
+from easypal_next.modem.tx_image import prepare_hamdrm_tx_file
 from easypal_next.waterfall.cue_wav import load_tune_pcm
 from easypal_next.waterfall.tx_pcm import encode_waterfall_text, play_waterfall_pcm
 
@@ -97,7 +98,8 @@ class HamDrmBackend(TransferBackend):
         self._unavailable_reason: str | None = None
         self._rx_active = False
         self._rx_paused_for_pcm = False
-        self._threads_started = False
+        self._rx_thread_started = False
+        self._tx_thread_started = False
         self._poll_stop = threading.Event()
         self._poll_thread: threading.Thread | None = None
         self._seen_rx: set[str] = set()
@@ -106,11 +108,18 @@ class HamDrmBackend(TransferBackend):
         self._tune_stop = threading.Event()
         self._tune_thread: threading.Thread | None = None
         self._tx_active = False
+        self._tx_busy = False
+        self._tx_abort = threading.Event()
         self._tx_poll_stop = threading.Event()
         self._tx_poll_thread: threading.Thread | None = None
+        self._file_tx_thread: threading.Thread | None = None
         self._wftxt_busy = False
         self._wftxt_stop = threading.Event()
         self._wftxt_thread: threading.Thread | None = None
+        self._tx_pic_estimate = 2
+        self._tx_progress_pct: int | None = None
+        self._tx_progress_seg: int | None = None
+        self._tx_deadline = 0.0
 
     @property
     def engine_name(self) -> str:
@@ -119,6 +128,10 @@ class HamDrmBackend(TransferBackend):
     @property
     def is_tuning(self) -> bool:
         return self._tuning
+
+    @property
+    def is_tx_busy(self) -> bool:
+        return self._tx_busy or self._tx_active
 
     def is_available(self) -> bool:
         if self._available is not None:
@@ -162,16 +175,32 @@ class HamDrmBackend(TransferBackend):
     def _apply_tx_params(self) -> None:
         lib = self._require_lib()
         modem = self._config.modem
+        qam = int(modem.hamdrm_qam)
+        mode = str(modem.hamdrm_mode).upper()
+        mscprot = str(modem.hamdrm_mscprot).lower()
+        lead_in = int(modem.hamdrm_start_delay)
         lib.SetCall(encode_callsign(effective_callsign(self._config)))
         lib.SetParams(
-            mode_constant(modem.hamdrm_mode),
+            mode_constant(mode),
             specocc_constant(modem.hamdrm_specocc),
-            mscprot_constant(modem.hamdrm_mscprot),
-            qam_constant(modem.hamdrm_qam),
+            mscprot_constant(mscprot),
+            qam_constant(qam),  # type: ignore[arg-type]
             interleave_constant(modem.hamdrm_interleave),
         )
         lib.SetDCFreq(int(modem.hamdrm_dc_freq))
-        lib.SetStartDelay(int(modem.hamdrm_start_delay))
+        lib.SetStartDelay(lead_in)
+        # MOT lead-in adds a full-file leader object when lead_in >= 1.
+        self._tx_pic_estimate = 2 if lead_in >= 1 else 1
+        self._event_bus.publish(
+            LogEvent(
+                level="info",
+                message=(
+                    f"HamDRM TX profile: {mode}/{modem.hamdrm_specocc}/"
+                    f"QAM{qam}/{mscprot}/{modem.hamdrm_interleave} "
+                    f"lead-in={lead_in}"
+                ),
+            )
+        )
 
     def _apply_paths(self) -> None:
         lib = self._require_lib()
@@ -239,6 +268,32 @@ class HamDrmBackend(TransferBackend):
             and not self._config.transfer.loopback_mode
         )
 
+    def _drm_callsign_ok(self, call: str) -> bool:
+        """HamDRM ControlTX requires a letter and a digit (see callisok())."""
+        has_alpha = any("A" <= ch <= "Z" for ch in call.upper())
+        has_digit = any(ch.isdigit() for ch in call)
+        return has_alpha and has_digit
+
+    def _ensure_rx_thread(self, in_dev: int) -> None:
+        lib = self._require_lib()
+        if self._rx_thread_started:
+            return
+        lib.SetAudDeviceIn(in_dev)
+        lib.StartThreadRX(in_dev)
+        self._rx_thread_started = True
+
+    def _ensure_tx_thread(self, out_dev: int) -> None:
+        """Start the WinMM TX worker once — required before ControlTX produces audio."""
+        lib = self._require_lib()
+        if self._tx_thread_started:
+            return
+        lib.SetAudDeviceOut(out_dev)
+        lib.StartThreadTX(out_dev)
+        self._tx_thread_started = True
+        self._event_bus.publish(
+            LogEvent(level="info", message=f"HamDRM TX thread started (WinMM out={out_dev})")
+        )
+
     def _set_ui_state(self, state: SessionState) -> None:
         self._event_bus.publish(SessionStateChangedEvent(state=state))
 
@@ -248,6 +303,7 @@ class HamDrmBackend(TransferBackend):
     def _pause_rx_for_pcm(self) -> None:
         """Release WinMM capture so PortAudio can play WFTxt / Tune safely."""
         # Flag first so the GUI spectrum timer skips DLL calls mid-flight.
+        # Do NOT StopThreads here — that has been segfaulting the x64 DLL mid-RX.
         self._rx_paused_for_pcm = True
         time.sleep(0.12)
         with self._lock:
@@ -256,7 +312,7 @@ class HamDrmBackend(TransferBackend):
                     self._lib.ControlRX(False)
                 except OSError as exc:
                     logger.warning("Pause RX for PCM failed: %s", exc)
-        time.sleep(0.15)
+        time.sleep(0.2)
 
     def _resume_rx_after_pcm(self) -> None:
         time.sleep(0.1)
@@ -338,6 +394,11 @@ class HamDrmBackend(TransferBackend):
         )
         self._event_bus.publish(WaterfallPaintStartedEvent(message=call))
         pcm = build_callsign_wftxt_audio(self._config)
+        paint_rate = int(self._config.waterfall.sample_rate or 25000)
+        dur = len(pcm) / float(paint_rate) if paint_rate else 0.0
+        self._event_bus.publish(
+            LogEvent(level="info", message=f"Callsign WFTxt duration {dur:.1f} s")
+        )
         self._play_pcm_on_air(pcm, stop_event=stop_event)
         if stop_event is None or not stop_event.is_set():
             self._header_gap(stop_event)
@@ -347,7 +408,7 @@ class HamDrmBackend(TransferBackend):
         text = (message or "").strip()
         if not text:
             raise ValueError("WFTxt message is empty")
-        if self._tuning or self._tx_active or self._wftxt_busy:
+        if self._tuning or self._tx_busy or self._tx_active or self._wftxt_busy:
             raise RuntimeError("Transfer already in progress")
         if self._config.transfer.loopback_mode:
             # Still play locally so operators can preview glyphs.
@@ -407,9 +468,9 @@ class HamDrmBackend(TransferBackend):
             out_dev = self._audio_device_id("out")
             lib.SetAudDeviceIn(in_dev)
             lib.SetAudDeviceOut(out_dev)
-            if not self._threads_started:
-                lib.StartThreadRX(in_dev)
-                self._threads_started = True
+            # EasyPal starts both workers at launch; TX must exist before ControlTX.
+            self._ensure_rx_thread(in_dev)
+            self._ensure_tx_thread(out_dev)
             lib.ControlRX(True)
             self._rx_active = True
             self._poll_stop.clear()
@@ -452,7 +513,7 @@ class HamDrmBackend(TransferBackend):
         """Safe to call from the Qt main thread only."""
         if not self._config.waterfall.live_enabled:
             return
-        if self._rx_paused_for_pcm or self._tuning or self._wftxt_busy or not self._rx_active:
+        if self._rx_paused_for_pcm or self._tuning or self._wftxt_busy or self._tx_busy or not self._rx_active:
             return
         try:
             with self._lock:
@@ -481,22 +542,26 @@ class HamDrmBackend(TransferBackend):
         except Exception:  # noqa: BLE001
             pass
 
-    def _publish_sync_status(self) -> None:
+    def _publish_sync_status(
+        self,
+        *,
+        percent_tx: int | None = None,
+        seg_pos: int | None = None,
+    ) -> None:
+        """Publish sync LEDs / TX %.
+
+        Never call ``GetPercentTX`` here during file TX — that API has a
+        destructive debounce counter. A second call per poll tick consumes the
+        ``TRUE`` completion result and the MOT slideshow loops forever.
+        """
         try:
             state = self.get_sync_state()
-            percent_tx = None
-            seg_pos = None
-            if self._tx_active:
-                with self._lock:
-                    if self._lib is None:
-                        return
-                    pic = c_int(0)
-                    pct = c_int(0)
-                    done = bool(self._lib.GetPercentTX(byref(pic), byref(pct)))
-                    percent_tx = int(pct.value)
-                    seg_pos = int(pic.value)
-                    if done:
-                        percent_tx = 100
+            cached_pct = percent_tx
+            cached_seg = seg_pos
+            if cached_pct is None:
+                cached_pct = getattr(self, "_tx_progress_pct", None)
+            if cached_seg is None:
+                cached_seg = getattr(self, "_tx_progress_seg", None)
             self._event_bus.publish(
                 SyncStatusEvent(
                     io=state.io,
@@ -509,8 +574,8 @@ class HamDrmBackend(TransferBackend):
                     dc_freq=state.dc_freq,
                     callsign=state.callsign,
                     mode=state.mode,
-                    percent_tx=percent_tx,
-                    seg_pos=seg_pos,
+                    percent_tx=cached_pct,
+                    seg_pos=cached_seg,
                 )
             )
         except Exception:  # noqa: BLE001
@@ -579,32 +644,196 @@ class HamDrmBackend(TransferBackend):
         file_path = Path(path).resolve()
         if not file_path.is_file():
             raise FileNotFoundError(file_path)
-        self._play_callsign_header()
-        with self._lock:
-            self._apply_tx_params()
-            self._apply_paths()
-            out_dev = self._audio_device_id("out")
-            lib.SetAudDeviceOut(out_dev)
-            if not self._threads_started:
-                lib.StartThreadTX(out_dev)
-                self._threads_started = True
-            ok = lib.SetFileTX(
-                encode_c_path(file_path.name),
-                encode_c_path(file_path),
-                1,
+        if self._tx_busy or self._tx_active or self._tuning or self._wftxt_busy:
+            raise RuntimeError("Transfer already in progress")
+
+        call = effective_callsign(self._config)
+        if not self._drm_callsign_ok(call):
+            raise RuntimeError(
+                f"Callsign '{call}' is not valid for HamDRM TX "
+                "(need at least one letter and one digit, e.g. N0CALL / M0VUB)."
             )
-            if not ok:
-                raise RuntimeError(f"SetFileTX failed for {file_path}")
-            lib.ControlTX(True)
-            self._tx_active = True
-            self._start_tx_poll()
-        self._event_bus.publish(LogEvent(level="info", message=f"HamDRM TX started: {file_path.name}"))
+
+        self._tx_abort.clear()
+        self._tx_busy = True
+        self._file_tx_thread = threading.Thread(
+            target=self._run_file_tx,
+            args=(file_path,),
+            name="hamdrm-file-tx",
+            daemon=True,
+        )
+        self._file_tx_thread.start()
+
+    def _run_file_tx(self, file_path: Path) -> None:
+        """Callsign header then DRM file TX; honour ``_tx_abort`` throughout."""
+        lib = self._require_lib()
+        aborted = False
+        try:
+            tx_path = prepare_hamdrm_tx_file(file_path)
+            src_kb = file_path.stat().st_size / 1024.0
+            tx_kb = tx_path.stat().st_size / 1024.0
+            # Handbook MSC rates (Mode B/2.5/norm/16 ≈ 2.3 kbps).
+            qam = int(self._config.modem.hamdrm_qam)
+            rough_bps = 3500.0 if qam >= 64 else 2300.0
+            eta_min = max(0.2, (tx_kb * 1024.0 * 8.0) / rough_bps / 60.0)
+            self._event_bus.publish(
+                LogEvent(
+                    level="info",
+                    message=(
+                        f"TX payload {tx_path.name}: {tx_kb:.1f} KB"
+                        + (
+                            f" (from {file_path.name} {src_kb:.1f} KB)"
+                            if tx_path != file_path
+                            else ""
+                        )
+                        + f" — payload ETA ~{eta_min:.1f} min (+ lead-in)"
+                    ),
+                )
+            )
+
+            # Skip PortAudio callsign WFTxt on HamDRM file TX — opening the sound
+            # card beside WinMM has been hard-crashing the x64 DLL. FAC still carries
+            # the callsign via SetCall.
+            self._set_ui_state(SessionState.TX_ACTIVE)
+            self._ptt_on()
+            if self._should_play_callsign_header():
+                self._event_bus.publish(
+                    LogEvent(
+                        level="info",
+                        message="Skipping WFTxt callsign header for HamDRM file TX (FAC ID only)",
+                    )
+                )
+            with self._lock:
+                if self._tx_abort.is_set():
+                    aborted = True
+                    return
+                self._apply_tx_params()
+                self._apply_paths()
+                out_dev = self._audio_device_id("out")
+                in_dev = self._audio_device_id("in")
+                lib.SetAudDeviceOut(out_dev)
+                self._ensure_rx_thread(in_dev)
+                self._ensure_tx_thread(out_dev)
+                if self._rx_active:
+                    try:
+                        lib.ControlRX(False)
+                    except OSError as exc:
+                        logger.warning("ControlRX(False) before TX failed: %s", exc)
+                    self._rx_paused_for_pcm = True
+                ok = lib.SetFileTX(
+                    encode_c_path(tx_path.name),
+                    encode_c_path(tx_path),
+                    1,
+                )
+                if not ok:
+                    raise RuntimeError(f"SetFileTX failed for {tx_path}")
+                lib.ControlTX(True)
+                self._tx_active = True
+                self._tx_progress_pct = 0
+                self._tx_progress_seg = 0
+                # Watchdog: native slideshow loops forever until ControlTX(False).
+                # ~2 MOT objects × payload; FM/64 ≈ 4.5 kbps, keep a generous ceiling.
+                rough_bps = 3500.0 if int(self._config.modem.hamdrm_qam) >= 64 else 2000.0
+                pics = max(1, int(self._tx_pic_estimate))
+                air_s = max(45.0, (tx_kb * 1024.0 * 8.0 * pics) / rough_bps * 2.5)
+                self._tx_deadline = time.monotonic() + air_s
+                # Segment count for ETA (Mode B ≈ 0.4 s/frame ballpark).
+                tot = c_int(0)
+                act = c_int(0)
+                try:
+                    lib.GetSegPosTX(byref(tot), byref(act))
+                except Exception:  # noqa: BLE001
+                    tot.value = 0
+                segs = int(tot.value)
+                self._event_bus.publish(
+                    LogEvent(
+                        level="info",
+                        message=(
+                            f"HamDRM TX armed: ~{pics} MOT object(s), "
+                            f"seg≈{segs or '?'}/obj, watchdog {air_s / 60.0:.1f} min"
+                        ),
+                    )
+                )
+                self._start_tx_poll()
+            self._event_bus.publish(
+                LogEvent(level="info", message=f"HamDRM TX started: {tx_path.name}")
+            )
+            total_units = max(1, segs) * max(1, int(self._tx_pic_estimate))
+            self._event_bus.publish(
+                TransferProgressEvent(pct=0.0, bytes_done=0, bytes_total=total_units)
+            )
+            # Wait until poll finishes, abort, or watchdog.
+            while self._tx_active and not self._tx_abort.is_set():
+                if self._tx_deadline and time.monotonic() >= self._tx_deadline:
+                    self._event_bus.publish(
+                        LogEvent(
+                            level="error",
+                            message=(
+                                "HamDRM TX watchdog — GetPercentTX never completed; "
+                                "forcing ControlTX off (slideshow was looping)"
+                            ),
+                        )
+                    )
+                    aborted = True
+                    break
+                time.sleep(0.1)
+            if self._tx_abort.is_set() and self._tx_active:
+                aborted = True
+        except Exception as exc:  # noqa: BLE001
+            self._event_bus.publish(
+                LogEvent(level="error", message=f"HamDRM TX failed: {exc}")
+            )
+            aborted = True
+        finally:
+            self._stop_file_tx(aborted=aborted)
+
+    def _stop_tx_poll(self) -> None:
+        self._tx_poll_stop.set()
+        thread = self._tx_poll_thread
+        self._tx_poll_thread = None
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+
+    def _clear_transfer_progress(self) -> None:
+        self._event_bus.publish(
+            TransferProgressEvent(pct=0.0, bytes_done=0, bytes_total=0)
+        )
+
+    def _stop_file_tx(self, *, aborted: bool) -> None:
+        """Idempotent end of a file TX (complete, error, or Abort)."""
+        with self._lock:
+            if not self._tx_busy and not self._tx_active:
+                return
+            if self._lib is not None:
+                try:
+                    self._lib.ControlTX(False)
+                except OSError as exc:
+                    logger.warning("ControlTX(False) failed: %s", exc)
+            self._tx_active = False
+            self._tx_busy = False
+        self._stop_tx_poll()
+        self._ptt_off()
+        # Resume always-on RX if we paused it for TX (do not tear RX down).
+        if self._rx_paused_for_pcm:
+            self._resume_rx_after_pcm()
+        elif self._rx_active and self._lib is not None:
+            try:
+                with self._lock:
+                    if self._lib is not None and self._rx_active and not self._rx_paused_for_pcm:
+                        self._lib.ControlRX(True)
+            except OSError as exc:
+                logger.warning("ControlRX(True) after TX failed: %s", exc)
+        self._clear_transfer_progress()
+        self._set_ui_state(SessionState.IDLE)
+        if aborted:
+            self._event_bus.publish(
+                LogEvent(level="warning", message="HamDRM TX aborted — ready for next file")
+            )
+        else:
+            self._event_bus.publish(LogEvent(level="info", message="HamDRM TX complete"))
 
     def _start_tx_poll(self) -> None:
-        self._tx_poll_stop.set()
-        prev = self._tx_poll_thread
-        if prev and prev.is_alive():
-            prev.join(timeout=1.0)
+        self._stop_tx_poll()
         self._tx_poll_stop.clear()
         self._tx_poll_thread = threading.Thread(
             target=self._poll_tx_loop,
@@ -614,50 +843,103 @@ class HamDrmBackend(TransferBackend):
         self._tx_poll_thread.start()
 
     def _poll_tx_loop(self) -> None:
+        """Poll HamDRM TX once per tick — single GetPercentTX call (see sync note)."""
+        last_log = 0.0
+        peak_pct = 0.0
+        # Lead-in>=1 → leader MOT object + payload (see MOTSlideShow.cpp).
+        pic_total = max(1, int(getattr(self, "_tx_pic_estimate", 2)))
         while not self._tx_poll_stop.wait(0.25):
-            if self._lib is None or not self._tx_active:
+            if self._lib is None or not self._tx_active or self._tx_abort.is_set():
                 break
             try:
                 with self._lock:
                     if self._lib is None or not self._tx_active:
                         break
+                    # ONLY call GetPercentTX here — never from sync publish during TX.
                     pic = c_int(0)
                     pct = c_int(0)
                     done = bool(self._lib.GetPercentTX(byref(pic), byref(pct)))
-                    pic_v = int(pic.value)
-                    pct_v = int(pct.value)
+                    tot = c_int(0)
+                    act = c_int(0)
+                    try:
+                        self._lib.GetSegPosTX(byref(tot), byref(act))
+                    except Exception:  # noqa: BLE001
+                        tot.value = 0
+                        act.value = 0
+                    pic_done = max(0, int(pic.value))
+                    obj_pct = max(0, min(100, int(pct.value)))
+                    seg_tot = max(0, int(tot.value))
+                    seg_act = max(0, int(act.value))
+                if self._tx_abort.is_set() or not self._tx_active:
+                    break
+
+                # Grow estimate if DLL reports more completed objects than expected.
+                pic_total = max(pic_total, pic_done + (0 if done else 1), 1)
+                if seg_tot > 0:
+                    # Full-transfer % across all MOT objects (not per-segment reset).
+                    overall = (pic_done * seg_tot + min(seg_act, seg_tot)) / float(
+                        pic_total * seg_tot
+                    )
+                    pct_v = int(min(100, round(100.0 * overall)))
+                    done_n = pic_done * seg_tot + seg_act
+                    total_n = pic_total * seg_tot
+                else:
+                    overall = (pic_done * 100 + obj_pct) / float(pic_total * 100)
+                    pct_v = int(min(100, round(100.0 * overall)))
+                    done_n = pic_done
+                    total_n = pic_total
+                if done:
+                    pct_v = 100
+                peak_pct = max(peak_pct, float(pct_v))
+                pct_v = int(peak_pct)
+                self._tx_progress_pct = pct_v
+                self._tx_progress_seg = seg_act
+
                 self._event_bus.publish(
                     TransferProgressEvent(
                         pct=float(pct_v),
-                        bytes_done=pic_v,
-                        bytes_total=max(1, pic_v + (0 if done else 1)),
+                        bytes_done=done_n,
+                        bytes_total=total_n,
                     )
                 )
-                self._publish_sync_status()
+                self._publish_sync_status(percent_tx=pct_v, seg_pos=seg_act)
+
+                now = time.monotonic()
+                if now - last_log >= 5.0:
+                    last_log = now
+                    self._event_bus.publish(
+                        LogEvent(
+                            level="info",
+                            message=(
+                                f"HamDRM TX progress {pct_v}% "
+                                f"(pics {pic_done}/{pic_total}, "
+                                f"seg {seg_act}/{seg_tot}"
+                                f"{', complete' if done else ''})"
+                            ),
+                        )
+                    )
+
                 if done:
+                    self._event_bus.publish(
+                        LogEvent(
+                            level="info",
+                            message="HamDRM GetPercentTX complete — stopping TX",
+                        )
+                    )
                     with self._lock:
-                        try:
-                            if self._lib is not None:
-                                self._lib.ControlTX(False)
-                        except OSError as exc:
-                            logger.warning("ControlTX(False) after TX done failed: %s", exc)
                         self._tx_active = False
-                    self._event_bus.publish(
-                        LogEvent(level="info", message="HamDRM TX complete")
-                    )
-                    self._event_bus.publish(
-                        TransferProgressEvent(pct=100.0, bytes_done=1, bytes_total=1)
-                    )
                     break
             except Exception as exc:  # noqa: BLE001
                 self._event_bus.publish(
                     LogEvent(level="error", message=f"HamDRM TX poll error: {exc}")
                 )
+                with self._lock:
+                    self._tx_active = False
                 break
 
     def start_tune(self) -> None:
         """Play callsign WFTxt, 1 s gap, then 720/1466/1840 Hz three-tone (max 5 s)."""
-        if self._tuning or self._wftxt_busy or self._tx_active:
+        if self._tuning or self._wftxt_busy or self._tx_busy or self._tx_active:
             return
         self._require_lib()
         self._tune_stop.clear()
@@ -725,35 +1007,56 @@ class HamDrmBackend(TransferBackend):
             self._set_ui_state(SessionState.IDLE)
 
     def abort(self) -> None:
+        """Stop Tune / WFTxt / file TX cleanly without tearing down always-on RX."""
         self.stop_tune()
         self._wftxt_stop.set()
+        self._tx_abort.set()
         self._tx_poll_stop.set()
-        if not self.is_available() or self._lib is None:
-            return
+
         with self._lock:
-            try:
-                self._lib.ControlTX(False)
-                self._lib.ControlRX(False)
-            except OSError as exc:
-                logger.warning("HamDRM abort control failed: %s", exc)
-            self._tx_active = False
-            self._rx_active = False
-            self._rx_paused_for_pcm = False
-            self._wftxt_busy = False
-            self._poll_stop.set()
-        self._event_bus.publish(LogEvent(level="warning", message="HamDRM transfer aborted"))
+            if self._lib is not None:
+                try:
+                    self._lib.ControlTX(False)
+                except OSError as exc:
+                    logger.warning("HamDRM abort ControlTX failed: %s", exc)
+
+        file_thread = self._file_tx_thread
+        if file_thread and file_thread.is_alive() and file_thread is not threading.current_thread():
+            file_thread.join(timeout=8.0)
+        self._file_tx_thread = None
+
+        wftxt_thread = self._wftxt_thread
+        if wftxt_thread and wftxt_thread.is_alive() and wftxt_thread is not threading.current_thread():
+            wftxt_thread.join(timeout=5.0)
+
+        # Finish any leftover TX state (no-op if worker already cleaned up).
+        self._stop_file_tx(aborted=True)
+        self._wftxt_busy = False
+        self._clear_transfer_progress()
         self._set_ui_state(SessionState.IDLE)
+        # Keep always-on RX alive — never set _poll_stop / _rx_active here.
+        if self._rx_active and self._lib is not None and not self._rx_paused_for_pcm:
+            try:
+                with self._lock:
+                    if self._lib is not None and self._rx_active:
+                        self._lib.ControlRX(True)
+            except OSError as exc:
+                logger.warning("HamDRM abort ControlRX(True) failed: %s", exc)
+        self._event_bus.publish(
+            LogEvent(level="warning", message="HamDRM abort complete — idle")
+        )
 
     def shutdown(self) -> None:
         """Stop RX/TX and release DLL worker threads (call on app exit)."""
         self.abort()
         self.stop_rx()
-        if self._lib is not None and self._threads_started:
+        if self._lib is not None and (self._rx_thread_started or self._tx_thread_started):
             try:
                 self._lib.StopThreads()
             except OSError as exc:
                 logger.warning("StopThreads failed: %s", exc)
-            self._threads_started = False
+            self._rx_thread_started = False
+            self._tx_thread_started = False
 
     def get_spectrum(self) -> list[float]:
         lib = self._require_lib()

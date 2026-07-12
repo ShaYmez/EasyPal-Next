@@ -131,7 +131,10 @@ class SettingsDialog(QDialog):
         self._hamdrm_leadin = QSpinBox()
         self._hamdrm_leadin.setRange(1, 64)
         self._hamdrm_leadin.setValue(cfg.modem.hamdrm_start_delay)
-        self._hamdrm_leadin.setToolTip("DRM lead-in / start delay (original default ~24)")
+        self._hamdrm_leadin.setToolTip(
+            "DRM lead-in / start delay. 12 = faster (fewer redundant segments); "
+            "24 = EasyPal default, more robust for short messages."
+        )
 
         form.addRow(QLabel("<b>Transfer engine</b>"))
         form.addRow("Engine:", self._engine)
